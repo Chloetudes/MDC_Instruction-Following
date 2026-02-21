@@ -201,16 +201,20 @@ class HumanExpertConsistencyAnalyzer:
                 continue
 
             avg_spearman = float(np.mean(all_spearmans))
-            avg_icc = float(np.mean(all_iccs)) if all_iccs else 0.0
-            avg_kappa = float(np.mean(all_kappas)) if all_kappas else 0.0
-            avg_nmae = float(np.mean(all_nmaes)) if all_nmaes else 1.0
+            avg_icc = float(np.mean(all_iccs)) if all_iccs else None
+            avg_kappa = float(np.mean(all_kappas)) if all_kappas else None
+            avg_nmae = float(np.mean(all_nmaes)) if all_nmaes else None
 
-            composite = (
-                avg_spearman * 0.4
-                + avg_icc * 0.3
-                + avg_kappa * 0.2
-                + (1.0 - avg_nmae) * 0.1
-            )
+            weight_map = {'spearman': (avg_spearman, 0.4)}
+            if avg_icc is not None:
+                weight_map['icc'] = (avg_icc, 0.3)
+            if avg_kappa is not None:
+                weight_map['kappa'] = (avg_kappa, 0.2)
+            if avg_nmae is not None:
+                weight_map['nmae'] = (1.0 - avg_nmae, 0.1)
+
+            total_weight = sum(w for _, w in weight_map.values())
+            composite = sum(v * w for v, w in weight_map.values()) / total_weight if total_weight > 0 else 0.0
 
             rater_quality.append({
                 '标注员': str(target_rater),
