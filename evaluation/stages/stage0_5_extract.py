@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import json
+import os
 import re
 from typing import List
 
@@ -68,6 +69,13 @@ def extract_structured_instructions(input_excel: str, output_excel: str) -> pd.D
     print(f"\n{'=' * 60}")
     print(f"🚀 模块0.5: 提取结构化指令（JSON 解析模式）")
     print(f"{'=' * 60}\n")
+
+    if not os.path.exists(input_excel):
+        raise RuntimeError(
+            f"extract_instructions: 找不到输入文件\n"
+            f"  路径: {input_excel}\n"
+            f"  请先运行 'generate_instructions' 阶段生成原始指令批次，再执行本阶段。"
+        )
 
     print(f"📖 读取输入: {input_excel}")
     df = pd.read_excel(input_excel)
