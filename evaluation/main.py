@@ -61,6 +61,9 @@ main.py - 评估系统入口
     ↓ analyze_results / generate_report
   analysis_report.xlsx / evaluation_report.html
 """
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from evaluation.pipeline import PipelineManager
 
 
