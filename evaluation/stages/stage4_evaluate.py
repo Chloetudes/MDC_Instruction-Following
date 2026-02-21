@@ -11,9 +11,9 @@ from tqdm import tqdm
 
 from config import get_provider
 from clients.openai_client import OAIClient
-from evaluation.core.utils import safe_str, safe_save_excel
-from evaluation.core.cache_messages import build_cached_messages, detect_provider_type
-from evaluation.managers.sysprompt import SyspromptManager
+from ..core.utils import safe_str, safe_save_excel
+from ..core.cache_messages import build_cached_messages, detect_provider_type
+from ..managers.sysprompt import SyspromptManager
 
 
 def is_evaluated(value) -> bool:

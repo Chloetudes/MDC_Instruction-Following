@@ -6,7 +6,7 @@ from typing import List
 import pandas as pd
 from tqdm import tqdm
 
-from evaluation.core.utils import safe_save_excel
+from ..core.utils import safe_save_excel
 
 
 def _parse_json_response(response_text: str, original_id: str) -> List[dict]:

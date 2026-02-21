@@ -7,9 +7,9 @@ from tqdm import tqdm
 
 from config import get_provider
 from clients.openai_client import OAIClient
-from evaluation.core.utils import safe_str, safe_save_excel
-from evaluation.managers.sysprompt import SyspromptManager
-from evaluation.managers.constraint_library import ConstraintLibraryManager
+from ..core.utils import safe_str, safe_save_excel
+from ..managers.sysprompt import SyspromptManager
+from ..managers.constraint_library import ConstraintLibraryManager
 
 
 class InstructionQualityEvaluator:

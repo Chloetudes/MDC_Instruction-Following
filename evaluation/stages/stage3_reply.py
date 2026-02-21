@@ -12,8 +12,8 @@ from tqdm import tqdm
 
 from config import get_provider_for_model
 from clients.openai_client import OAIClient
-from evaluation.core.utils import safe_str, safe_save_excel
-from evaluation.core.blacklist import MODEL_BLACKLIST, is_permission_error
+from ..core.utils import safe_str, safe_save_excel
+from ..core.blacklist import MODEL_BLACKLIST, is_permission_error
 
 
 def _build_messages_for_reply(query: str, history_context: str = '') -> List[Dict]:

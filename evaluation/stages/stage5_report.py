@@ -11,15 +11,15 @@ from tqdm import tqdm
 
 from config import get_provider
 from clients.openai_client import OAIClient
-from evaluation.core.utils import safe_str, safe_save_excel
-from evaluation.managers.sysprompt import SyspromptManager
-from evaluation.analysis.data_loader import load_and_preprocess
-from evaluation.analysis.ranking import ModelRankingAnalyzer, ExpertCorrectedRankingAnalyzer
-from evaluation.analysis.consistency import HumanExpertConsistencyAnalyzer, ModelReliabilityAnalyzer
-from evaluation.analysis.valuable_questions import ValuableQuestionAnalyzer
-from evaluation.analysis.item_analysis import ItemAnalyzer
-from evaluation.analysis.report_writer_html import generate_html_report
-from evaluation.analysis.report_writer_md import generate_markdown_report
+from ..core.utils import safe_str, safe_save_excel
+from ..managers.sysprompt import SyspromptManager
+from ..analysis.data_loader import load_and_preprocess
+from ..analysis.ranking import ModelRankingAnalyzer, ExpertCorrectedRankingAnalyzer
+from ..analysis.consistency import HumanExpertConsistencyAnalyzer, ModelReliabilityAnalyzer
+from ..analysis.valuable_questions import ValuableQuestionAnalyzer
+from ..analysis.item_analysis import ItemAnalyzer
+from ..analysis.report_writer_html import generate_html_report
+from ..analysis.report_writer_md import generate_markdown_report
 
 
 DEFAULT_REPORT_SYSPROMPT = """你是一位专业的AI模型评测分析师。

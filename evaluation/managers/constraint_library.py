@@ -6,8 +6,8 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from evaluation.core.types import Constraint
-from evaluation.core.utils import safe_str, safe_save_excel
+from ..core.types import Constraint
+from ..core.utils import safe_str, safe_save_excel
 
 
 class ConstraintLibraryManager:

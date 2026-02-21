@@ -8,7 +8,7 @@ from tqdm import tqdm
 
 from config import get_provider, get_provider_for_model
 from clients.openai_client import OAIClient
-from evaluation.core.utils import safe_save_excel
+from ..core.utils import safe_save_excel
 
 
 class ModelAvailabilityTester:

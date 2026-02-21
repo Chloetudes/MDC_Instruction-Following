@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import pandas as pd
-from evaluation.core.utils import safe_str, sanitize_text
+from ..core.utils import safe_str, sanitize_text
 
 
 class SyspromptManager:

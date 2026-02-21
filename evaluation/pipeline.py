@@ -13,12 +13,12 @@ from typing import Dict, List, Optional
 
 import pandas as pd
 
-from evaluation.managers.directory import DirectoryManager
-from evaluation.managers.sysprompt import SyspromptManager
-from evaluation.managers.constraint_library import ConstraintLibraryManager
-from evaluation.testing.model_tester import ModelAvailabilityTester, select_best_judge_model
-from evaluation.core.utils import safe_save_excel
-from evaluation.stages import (
+from .managers.directory import DirectoryManager
+from .managers.sysprompt import SyspromptManager
+from .managers.constraint_library import ConstraintLibraryManager
+from .testing.model_tester import ModelAvailabilityTester, select_best_judge_model
+from .core.utils import safe_save_excel
+from .stages import (
     generate_instructions,
     extract_structured_instructions,
     expand_to_multiturn,
@@ -29,7 +29,7 @@ from evaluation.stages import (
     batch_evaluate_responses_with_cache,
     generate_evaluation_report,
 )
-from evaluation.analysis import generate_analysis_report, generate_all_series_reports
+from .analysis import generate_analysis_report, generate_all_series_reports
 
 
 class PipelineManager:
