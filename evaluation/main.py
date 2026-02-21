@@ -81,7 +81,7 @@ CONFIG = {
     ],
 
     # ========== 基础配置 ==========
-    'sysprompt_excel': "data/evaluation/sysprompts.xlsx",
+    'sysprompt_excel': "data/sysprompts.xlsx",
     'output_base_dir': "outputs/evaluation",
 
     # ========== 裁判模型配置 ==========
