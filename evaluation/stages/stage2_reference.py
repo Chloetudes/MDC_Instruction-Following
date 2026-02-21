@@ -11,6 +11,10 @@ from evaluation.core.utils import safe_str, safe_save_excel
 from evaluation.managers.sysprompt import SyspromptManager
 
 
+def _is_valid(value: str) -> bool:
+    return bool(value and value.strip() and value.lower() not in ('nan', 'none', 'null'))
+
+
 class ReferenceAnswerGenerator:
     def __init__(self, client: OAIClient, model: str,
                  sysprompt_manager: SyspromptManager, temperature: float = 0.7):
@@ -19,13 +23,32 @@ class ReferenceAnswerGenerator:
         self.sysprompt_manager = sysprompt_manager
         self.temperature = temperature
 
-    def generate(self, qid: str, query: str, evaluation_criteria: str) -> Tuple[str, str]:
+    def generate(
+        self,
+        qid: str,
+        query: str,
+        evaluation_criteria: str,
+        reply_evaluation: str = '',
+    ) -> Tuple[str, str]:
         sys_prompt = self.sysprompt_manager.get('reference_generation', '')
-        user_prompt = (
+
+        parts = [
             f"请根据以下指令和评分标准，生成高质量的参考答案。\n\n"
-            f"题目ID: {qid}\n\n指令内容:\n{query}\n\n评分标准:\n{evaluation_criteria}\n\n"
-            f"请生成一个符合评分标准的高质量参考答案。"
-        )
+            f"题目ID: {qid}\n\n"
+            f"【指令内容】\n{query}\n\n"
+            f"【评分标准】\n{evaluation_criteria}"
+        ]
+
+        if _is_valid(reply_evaluation):
+            parts.append(
+                f"\n【专家评分说明】\n{reply_evaluation}\n\n"
+                f"请参考专家评分说明中提炼的核心答题方向和评分要点，"
+                f"确保参考答案充分覆盖高分要素。"
+            )
+        else:
+            parts.append(f"\n\n请生成一个符合评分标准的高质量参考答案。")
+
+        user_prompt = '\n'.join(parts)
 
         try:
             messages = []
@@ -73,9 +96,15 @@ def batch_generate_references(
         raise ValueError(f"缺少必需列: {', '.join(missing_cols)}")
 
     has_reference = 'reference' in df.columns
+    has_reply_evaluation = 'reply_evaluation' in df.columns
     print(f"  数据行数: {len(df)}")
     if has_reference:
         print(f"  已有参考答案: {df['reference'].notna().sum()} 条")
+    if has_reply_evaluation:
+        valid_eval_count = df['reply_evaluation'].apply(
+            lambda v: _is_valid(safe_str(v))
+        ).sum()
+        print(f"  专家评分说明: {valid_eval_count} 条")
     print()
 
     results = []
@@ -98,14 +127,15 @@ def batch_generate_references(
             continue
 
         existing_ref = safe_str(row['reference']) if has_reference else ''
-        has_existing = bool(existing_ref and existing_ref.lower() != 'nan' and existing_ref.strip())
+        has_existing = _is_valid(existing_ref)
 
         task = {
             'qid': qid,
             'query': safe_str(row['query']),
             'evaluation_criteria': safe_str(row['evaluation_criteria']),
             'has_existing_reference': has_existing,
-            'existing_reference': existing_ref if has_existing else ''
+            'existing_reference': existing_ref if has_existing else '',
+            'reply_evaluation': safe_str(row['reply_evaluation']) if has_reply_evaluation else '',
         }
         for col in ['task_type', 'source']:
             if col in df.columns:
@@ -131,7 +161,10 @@ def batch_generate_references(
                 human_ref_count += 1
             else:
                 reference, error_msg = generator.generate(
-                    task['qid'], task['query'], task['evaluation_criteria']
+                    qid=task['qid'],
+                    query=task['query'],
+                    evaluation_criteria=task['evaluation_criteria'],
+                    reply_evaluation=task.get('reply_evaluation', ''),
                 )
                 reference_type = "model"
                 if error_msg:
@@ -141,13 +174,17 @@ def batch_generate_references(
                     model_ref_count += 1
 
             result_row = {
-                'qid': task['qid'], 'query': task['query'],
+                'qid': task['qid'],
+                'query': task['query'],
                 'evaluation_criteria': task['evaluation_criteria'],
-                'reference': reference, 'reference_type': reference_type,
+                'reference': reference,
+                'reference_type': reference_type,
                 'error': error_msg,
                 'status': 'ok' if not error_msg else 'error',
-                'timestamp': pd.Timestamp.now()
+                'timestamp': pd.Timestamp.now(),
             }
+            if has_reply_evaluation:
+                result_row['reply_evaluation'] = task.get('reply_evaluation', '')
             for col in ['task_type', 'source']:
                 if col in task:
                     result_row[col] = task[col]
