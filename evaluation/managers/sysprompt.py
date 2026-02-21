@@ -9,32 +9,63 @@ class SyspromptManager:
         self.sysprompts = self._load(sysprompt_excel)
 
     def _load(self, excel_path: str) -> dict:
+        sysprompts = {}
+
+        txt_dir = os.path.join(os.path.dirname(excel_path), "sysprompts")
+        if os.path.isdir(txt_dir):
+            for filename in os.listdir(txt_dir):
+                if filename.endswith(".txt"):
+                    stage_key = filename[:-4]
+                    txt_path = os.path.join(txt_dir, filename)
+                    try:
+                        with open(txt_path, "r", encoding="utf-8") as f:
+                            content = f.read().strip()
+                        if content:
+                            sysprompts[stage_key] = sanitize_text(content)
+                    except Exception as e:
+                        print(f"⚠️  读取 {txt_path} 失败: {e}")
+
+        if txt_dir and sysprompts:
+            print(f"📖 从 {txt_dir}/ 加载了 {len(sysprompts)} 个 txt sysprompt")
+
         print(f"📖 读取Sysprompt配置: {excel_path}")
 
         if not os.path.exists(excel_path):
             print(f"⚠️  Sysprompt文件不存在，将使用空配置")
-            return {}
+            if sysprompts:
+                print(f"✅ 仅使用 txt 文件配置，共 {len(sysprompts)} 个:")
+                for stage, content in sysprompts.items():
+                    print(f"  - {stage}: 已配置({len(content)}字)")
+                print()
+            return sysprompts
 
         try:
             df = pd.read_excel(excel_path)
         except Exception as e:
             print(f"⚠️  无法读取Sysprompt文件: {e}")
-            return {}
+            return sysprompts
 
         if 'stage' not in df.columns or 'sysprompt' not in df.columns:
             print(f"⚠️  Sysprompt表必须包含 stage 和 sysprompt 列")
-            return {}
+            return sysprompts
 
-        sysprompts = {}
         for _, row in df.iterrows():
             stage = safe_str(row['stage']).strip()
-            sysprompt = safe_str(row['sysprompt']).strip()
-            if stage:
-                sysprompts[stage] = sanitize_text(sysprompt) if sysprompt and sysprompt.lower() != 'nan' else ""
+            raw_value = row['sysprompt']
+            sysprompt = safe_str(raw_value).strip()
+            if not stage:
+                continue
+            is_empty = not sysprompt or sysprompt.lower() in ('nan', 'none', 'null', '')
+            if is_empty:
+                if stage not in sysprompts:
+                    print(f"  ⚠️  stage={stage} Excel中sysprompt为空（原始类型={type(raw_value).__name__}），"
+                          f"如需配置请在 data/sysprompts/{stage}.txt 中写入内容")
+            else:
+                sysprompts[stage] = sanitize_text(sysprompt)
 
         print(f"✅ 加载 {len(sysprompts)} 个Sysprompt:")
         for stage, content in sysprompts.items():
-            print(f"  - {stage}: {'已配置' if content else '空'}")
+            print(f"  - {stage}: 已配置({len(content)}字)")
         print()
 
         return sysprompts
