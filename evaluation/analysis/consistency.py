@@ -5,6 +5,9 @@ from scipy.stats import spearmanr, kendalltau, pearsonr
 
 from .metrics import ScientificMetrics
 
+MIN_SAMPLE_FOR_CORRELATION = 3
+MIN_MODELS_PER_QUESTION = 2
+
 
 class HumanModelConsistencyAnalyzer:
 
@@ -29,26 +32,29 @@ class HumanModelConsistencyAnalyzer:
         results = []
         for qid in merged['qid'].unique():
             q_data = merged[merged['qid'] == qid]
-            if len(q_data) < 5:
+            if len(q_data) < MIN_MODELS_PER_QUESTION:
                 continue
 
             human_rank = q_data.groupby('model')['human_score'].mean().rank(ascending=False, method='dense')
             model_rank = q_data.groupby('model')['eval_score'].mean().rank(ascending=False, method='dense')
             common_models = set(human_rank.index) & set(model_rank.index)
-            if len(common_models) < 5:
+            if len(common_models) < MIN_MODELS_PER_QUESTION:
                 continue
 
             h_list = [human_rank[m] for m in common_models]
             m_list = [model_rank[m] for m in common_models]
 
-            try:
-                rank_corr, _ = spearmanr(h_list, m_list)
-            except Exception:
-                rank_corr = np.nan
-            try:
-                kendall_corr, _ = kendalltau(h_list, m_list)
-            except Exception:
-                kendall_corr = np.nan
+            rank_corr = np.nan
+            kendall_corr = np.nan
+            if len(h_list) >= MIN_SAMPLE_FOR_CORRELATION:
+                try:
+                    rank_corr, _ = spearmanr(h_list, m_list)
+                except Exception:
+                    pass
+                try:
+                    kendall_corr, _ = kendalltau(h_list, m_list)
+                except Exception:
+                    pass
 
             rank_diff = np.array(h_list) - np.array(m_list)
             top3_human = set(human_rank.nsmallest(3).index) if len(human_rank) >= 3 else set()
@@ -84,22 +90,24 @@ class HumanModelConsistencyAnalyzer:
             model_scores = self.replies[['qid', 'model', 'eval_score']].dropna()
             merged = rater_avg.merge(model_scores, on=['qid', 'model'], how='inner')
 
-            if len(merged) < 10:
+            if len(merged) < MIN_SAMPLE_FOR_CORRELATION:
                 continue
 
             rank_corrs, top1_consistents, top3_overlaps = [], [], []
             for qid in merged['qid'].unique():
                 q_data = merged[merged['qid'] == qid]
-                if len(q_data) < 5:
+                if len(q_data) < MIN_MODELS_PER_QUESTION:
                     continue
+
                 human_rank = q_data['score'].rank(ascending=False, method='dense')
                 model_rank = q_data['eval_score'].rank(ascending=False, method='dense')
-                try:
-                    r_corr, _ = spearmanr(human_rank, model_rank)
-                    if not np.isnan(r_corr):
-                        rank_corrs.append(r_corr)
-                except Exception:
-                    pass
+                if len(q_data) >= MIN_SAMPLE_FOR_CORRELATION:
+                    try:
+                        r_corr, _ = spearmanr(human_rank, model_rank)
+                        if not np.isnan(r_corr):
+                            rank_corrs.append(r_corr)
+                    except Exception:
+                        pass
 
                 top1_h = q_data.loc[q_data['score'].idxmax(), 'model'] if not q_data.empty else None
                 top1_m = q_data.loc[q_data['eval_score'].idxmax(), 'model'] if not q_data.empty else None
@@ -113,6 +121,7 @@ class HumanModelConsistencyAnalyzer:
 
             icc = ScientificMetrics.icc_2_1(merged['score'].values, merged['eval_score'].values)
             kappa = ScientificMetrics.cohens_kappa_weighted(merged['score'].values, merged['eval_score'].values)
+            nmae = ScientificMetrics.normalized_mae(merged['score'].values, merged['eval_score'].values)
             try:
                 spearman_corr = spearmanr(merged['score'], merged['eval_score'])[0]
             except Exception:
@@ -130,6 +139,7 @@ class HumanModelConsistencyAnalyzer:
                 '加权Kappa': round(kappa, 3) if not np.isnan(kappa) else 'N/A',
                 '打分一致性_斯皮尔曼': round(spearman_corr, 3) if not np.isnan(spearman_corr) else 'N/A',
                 'MAE': round(mae, 2),
+                '归一化MAE': round(nmae, 3) if not np.isnan(nmae) else 'N/A',
             })
 
         df = pd.DataFrame(results)
@@ -162,14 +172,14 @@ class HumanExpertConsistencyAnalyzer:
             target_avg = target_data.groupby(['qid', 'model'])['score'].mean().reset_index()
             target_avg['task_id'] = target_avg['qid'].astype(str) + '_' + target_avg['model'].astype(str)
 
-            all_spearmans, all_iccs, all_kappas, all_maes = [], [], [], []
+            all_spearmans, all_iccs, all_kappas, all_nmaes = [], [], [], []
             for other_rater in [r for r in raters if r != target_rater]:
                 other_data = self.rater_scores[self.rater_scores['rater'] == other_rater]
                 other_avg = other_data.groupby(['qid', 'model'])['score'].mean().reset_index()
                 other_avg['task_id'] = other_avg['qid'].astype(str) + '_' + other_avg['model'].astype(str)
                 merged = target_avg.merge(other_avg[['task_id', 'score']], on='task_id', suffixes=('_t', '_o'))
 
-                if len(merged) < 5:
+                if len(merged) < MIN_SAMPLE_FOR_CORRELATION:
                     continue
                 try:
                     r, _ = spearmanr(merged['score_t'], merged['score_o'])
@@ -183,16 +193,24 @@ class HumanExpertConsistencyAnalyzer:
                 kappa = ScientificMetrics.cohens_kappa_weighted(merged['score_t'].values, merged['score_o'].values)
                 if not np.isnan(kappa):
                     all_kappas.append(kappa)
-                all_maes.append(float(np.abs(merged['score_t'] - merged['score_o']).mean()))
+                nmae = ScientificMetrics.normalized_mae(merged['score_t'].values, merged['score_o'].values)
+                if not np.isnan(nmae):
+                    all_nmaes.append(nmae)
 
             if not all_spearmans:
                 continue
 
             avg_spearman = float(np.mean(all_spearmans))
-            avg_icc = float(np.mean(all_iccs)) if all_iccs else 0
-            avg_kappa = float(np.mean(all_kappas)) if all_kappas else 0
-            avg_mae = float(np.mean(all_maes))
-            composite = avg_spearman * 0.4 + avg_icc * 0.3 + avg_kappa * 0.2 + (1 - avg_mae / 100) * 0.1
+            avg_icc = float(np.mean(all_iccs)) if all_iccs else 0.0
+            avg_kappa = float(np.mean(all_kappas)) if all_kappas else 0.0
+            avg_nmae = float(np.mean(all_nmaes)) if all_nmaes else 1.0
+
+            composite = (
+                avg_spearman * 0.4
+                + avg_icc * 0.3
+                + avg_kappa * 0.2
+                + (1.0 - avg_nmae) * 0.1
+            )
 
             rater_quality.append({
                 '标注员': str(target_rater),
@@ -200,7 +218,7 @@ class HumanExpertConsistencyAnalyzer:
                 '平均斯皮尔曼_ρ': round(avg_spearman, 3),
                 '平均ICC(2,1)': round(avg_icc, 3),
                 '平均加权Kappa': round(avg_kappa, 3),
-                '平均MAE': round(avg_mae, 2),
+                '平均归一化MAE': round(avg_nmae, 3),
                 '综合质量得分': round(composite, 3),
             })
 
@@ -232,7 +250,7 @@ class HumanExpertConsistencyAnalyzer:
             rater_avg['task_id'] = rater_avg['qid'].astype(str) + '_' + rater_avg['model'].astype(str)
             merged = rater_avg.merge(expert[['task_id', 'score']], on='task_id', suffixes=('_rater', '_expert'))
 
-            if len(merged) < 5:
+            if len(merged) < MIN_SAMPLE_FOR_CORRELATION:
                 continue
             try:
                 spearman_r = spearmanr(merged['score_rater'], merged['score_expert'])[0]
@@ -241,6 +259,7 @@ class HumanExpertConsistencyAnalyzer:
             icc = ScientificMetrics.icc_2_1(merged['score_rater'].values, merged['score_expert'].values)
             kappa = ScientificMetrics.cohens_kappa_weighted(merged['score_rater'].values, merged['score_expert'].values)
             mae = float(np.abs(merged['score_rater'] - merged['score_expert']).mean())
+            nmae = ScientificMetrics.normalized_mae(merged['score_rater'].values, merged['score_expert'].values)
 
             results.append({
                 '标注员': str(rater),
@@ -249,6 +268,7 @@ class HumanExpertConsistencyAnalyzer:
                 '与专家_ICC': round(icc, 3) if not np.isnan(icc) else 'N/A',
                 '与专家_加权Kappa': round(kappa, 3) if not np.isnan(kappa) else 'N/A',
                 '与专家_MAE': round(mae, 2),
+                '与专家_归一化MAE': round(nmae, 3) if not np.isnan(nmae) else 'N/A',
             })
 
         df = pd.DataFrame(results)
@@ -274,10 +294,11 @@ class HumanExpertConsistencyAnalyzer:
         expert['task_id'] = expert['qid'].astype(str) + '_' + expert['model'].astype(str)
         merged = human_avg.merge(expert[['task_id', 'score']], on='task_id')
 
-        if len(merged) < 5:
+        if len(merged) < MIN_SAMPLE_FOR_CORRELATION:
             return pd.DataFrame()
 
         icc = ScientificMetrics.icc_2_1(merged['human_avg_score'].values, merged['score'].values)
+        nmae = ScientificMetrics.normalized_mae(merged['human_avg_score'].values, merged['score'].values)
         try:
             spearman_r = spearmanr(merged['human_avg_score'], merged['score'])[0]
         except Exception:
@@ -291,6 +312,7 @@ class HumanExpertConsistencyAnalyzer:
             '斯皮尔曼_ρ': round(spearman_r, 3) if not np.isnan(spearman_r) else 'N/A',
             'ICC(2,1)': round(icc, 3) if not np.isnan(icc) else 'N/A',
             'MAE': round(mae, 2),
+            '归一化MAE': round(nmae, 3) if not np.isnan(nmae) else 'N/A',
         }])
 
 
@@ -309,7 +331,7 @@ class ModelReliabilityAnalyzer:
         model = self.replies[['qid', 'model', 'eval_score']].dropna().rename(columns={'eval_score': 'model_score'})
         merged = model.merge(expert, on=['qid', 'model'], how='inner')
 
-        if len(merged) < 5:
+        if len(merged) < MIN_SAMPLE_FOR_CORRELATION:
             return pd.DataFrame(), pd.DataFrame()
 
         try:
@@ -321,6 +343,7 @@ class ModelReliabilityAnalyzer:
         icc = ScientificMetrics.icc_2_1(merged['model_score'].values, merged['expert_score'].values)
         mae = float(np.abs(merged['model_score'] - merged['expert_score']).mean())
         rmse = float(np.sqrt(((merged['model_score'] - merged['expert_score']) ** 2).mean()))
+        nmae = ScientificMetrics.normalized_mae(merged['model_score'].values, merged['expert_score'].values)
 
         overall_df = pd.DataFrame([{
             '对比维度': '整体',
@@ -332,12 +355,13 @@ class ModelReliabilityAnalyzer:
             'ICC(2,1)': round(icc, 3) if not np.isnan(icc) else 'N/A',
             'MAE': round(mae, 2),
             'RMSE': round(rmse, 2),
+            '归一化MAE': round(nmae, 3) if not np.isnan(nmae) else 'N/A',
         }])
 
         model_results = []
         for model_name in merged['model'].unique():
             m_data = merged[merged['model'] == model_name]
-            if len(m_data) < 5:
+            if len(m_data) < MIN_SAMPLE_FOR_CORRELATION:
                 continue
             try:
                 spearman_m = spearmanr(m_data['model_score'], m_data['expert_score'])[0]
@@ -345,12 +369,14 @@ class ModelReliabilityAnalyzer:
                 spearman_m = np.nan
             m_icc = ScientificMetrics.icc_2_1(m_data['model_score'].values, m_data['expert_score'].values)
             m_mae = float(np.abs(m_data['model_score'] - m_data['expert_score']).mean())
+            m_nmae = ScientificMetrics.normalized_mae(m_data['model_score'].values, m_data['expert_score'].values)
             model_results.append({
                 '模型': model_name,
                 '样本量': len(m_data),
                 '斯皮尔曼_ρ': round(spearman_m, 3) if not np.isnan(spearman_m) else 'N/A',
                 'ICC(2,1)': round(m_icc, 3) if not np.isnan(m_icc) else 'N/A',
                 'MAE': round(m_mae, 2),
+                '归一化MAE': round(m_nmae, 3) if not np.isnan(m_nmae) else 'N/A',
                 '模型均分': round(float(m_data['model_score'].mean()), 2),
                 '专家均分': round(float(m_data['expert_score'].mean()), 2),
                 '均分差': round(float(m_data['model_score'].mean() - m_data['expert_score'].mean()), 2),
@@ -374,22 +400,24 @@ class ModelReliabilityAnalyzer:
         model = self.replies[['qid', 'model', 'eval_score']].dropna().rename(columns={'eval_score': 'model_score'})
         merged = model.merge(expert, on=['qid', 'model'], how='inner')
 
-        if len(merged) < 5:
+        if len(merged) < MIN_SAMPLE_FOR_CORRELATION:
             return pd.DataFrame(), pd.DataFrame()
 
         model_rank = merged.groupby('model')['model_score'].mean().rank(ascending=False, method='dense')
         expert_rank = merged.groupby('model')['expert_score'].mean().rank(ascending=False, method='dense')
         common_models = set(model_rank.index) & set(expert_rank.index)
 
-        if len(common_models) < 5:
+        if len(common_models) < MIN_MODELS_PER_QUESTION:
             return pd.DataFrame(), pd.DataFrame()
 
         m_list = [model_rank[m] for m in common_models]
         e_list = [expert_rank[m] for m in common_models]
-        try:
-            rank_corr = spearmanr(m_list, e_list)[0]
-        except Exception:
-            rank_corr = np.nan
+        rank_corr = np.nan
+        if len(m_list) >= MIN_SAMPLE_FOR_CORRELATION:
+            try:
+                rank_corr = spearmanr(m_list, e_list)[0]
+            except Exception:
+                pass
 
         comparison = []
         for m in common_models:
