@@ -182,7 +182,15 @@ def generate_evaluation_report(
     report_sysprompt = sysprompt_manager.get('report_analysis', DEFAULT_REPORT_SYSPROMPT)
 
     provider_obj = get_provider(provider)
-    client = OAIClient(provider_obj)
+    client = OAIClient(
+        base_url=provider_obj.base_url,
+        api_key=provider_obj.api_key,
+        protocol=provider_obj.protocol,
+        auth_header=provider_obj.auth_header,
+        auth_prefix=provider_obj.auth_prefix,
+        extra_headers=provider_obj.extra_headers,
+        timeout=timeout,
+    )
 
     print(f'\n▶ AI分析 {len(candidate_qids)} 道价值题目...')
     case_analyses = []
