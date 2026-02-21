@@ -17,6 +17,7 @@ from evaluation.stages import (
     batch_generate_replies,
     batch_evaluate_responses_with_cache,
 )
+from evaluation.analysis import generate_analysis_report
 
 
 class PipelineManager:
@@ -60,7 +61,12 @@ class PipelineManager:
             'name': '模型可用性测试',
             'input_files': [],
             'output_files': ['library/model_availability_test.xlsx']
-        }
+        },
+        'analyze_results': {
+            'name': '评测结果综合分析',
+            'input_files': ['questions/questions_complete.xlsx', 'replies/replies.xlsx'],
+            'output_files': ['reports/analysis_report.xlsx']
+        },
     }
 
     def __init__(self, config: dict):
@@ -183,6 +189,20 @@ class PipelineManager:
                 max_workers=cfg.get('max_workers', 5),
                 checkpoint_interval=cfg['checkpoint_interval'],
                 timeout=cfg['timeout']
+            )
+
+        elif stage == 'analyze_results':
+            analysis_cfg = cfg.get('analysis', {})
+            replies_file = analysis_cfg.get(
+                'replies_excel',
+                dm.get_path("replies", "cif_400_all_replies.xlsx")
+            )
+            generate_analysis_report(
+                questions_excel=dm.get_path("questions", "questions_complete.xlsx"),
+                replies_excel=replies_file,
+                output_excel=dm.get_path("reports", "analysis_report.xlsx"),
+                human_excel=analysis_cfg.get('human_excel'),
+                eval_batch_id=analysis_cfg.get('eval_batch_id', cfg.get('batch_id')),
             )
 
     def run(self, stages: List[str]):

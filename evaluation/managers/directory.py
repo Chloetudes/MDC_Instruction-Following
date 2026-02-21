@@ -12,7 +12,8 @@ class DirectoryManager:
             "questions": f"{base_dir}/questions",
             "replies": f"{base_dir}/replies",
             "evaluations": f"{base_dir}/evaluations",
-            "library": f"{base_dir}/library"
+            "library": f"{base_dir}/library",
+            "reports": f"{base_dir}/reports",
         }
         self._create_directories()
 
