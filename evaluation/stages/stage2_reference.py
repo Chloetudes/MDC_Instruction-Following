@@ -15,6 +15,10 @@ def _is_valid(value: str) -> bool:
     return bool(value and value.strip() and value.lower() not in ('nan', 'none', 'null'))
 
 
+MULTITURN_PASSTHROUGH_COLS = ['session_id', 'turn_id', 'history_context']
+METADATA_PASSTHROUGH_COLS = ['task_type', 'source', 'original_id', 'item_num', 'L1', 'L2', 'L3']
+
+
 class ReferenceAnswerGenerator:
     def __init__(self, client: OAIClient, model: str,
                  sysprompt_manager: SyspromptManager, temperature: float = 0.7):
@@ -97,6 +101,7 @@ def batch_generate_references(
 
     has_reference = 'reference' in df.columns
     has_reply_evaluation = 'reply_evaluation' in df.columns
+    detected_multiturn = [col for col in MULTITURN_PASSTHROUGH_COLS if col in df.columns]
     print(f"  数据行数: {len(df)}")
     if has_reference:
         print(f"  已有参考答案: {df['reference'].notna().sum()} 条")
@@ -105,6 +110,8 @@ def batch_generate_references(
             lambda v: _is_valid(safe_str(v))
         ).sum()
         print(f"  专家评分说明: {valid_eval_count} 条")
+    if detected_multiturn:
+        print(f"  检测到多轮字段: {', '.join(detected_multiturn)}（将透传到输出）")
     print()
 
     results = []
@@ -119,6 +126,8 @@ def batch_generate_references(
             print(f"💾 发现已有结果: {len(existing_qids)} 条")
         except Exception:
             pass
+
+    all_passthrough_cols = METADATA_PASSTHROUGH_COLS + MULTITURN_PASSTHROUGH_COLS
 
     tasks = []
     for _, row in df.iterrows():
@@ -137,7 +146,7 @@ def batch_generate_references(
             'existing_reference': existing_ref if has_existing else '',
             'reply_evaluation': safe_str(row['reply_evaluation']) if has_reply_evaluation else '',
         }
-        for col in ['task_type', 'source']:
+        for col in all_passthrough_cols:
             if col in df.columns:
                 task[col] = safe_str(row[col])
         tasks.append(task)
@@ -185,7 +194,7 @@ def batch_generate_references(
             }
             if has_reply_evaluation:
                 result_row['reply_evaluation'] = task.get('reply_evaluation', '')
-            for col in ['task_type', 'source']:
+            for col in all_passthrough_cols:
                 if col in task:
                     result_row[col] = task[col]
             new_results.append(result_row)

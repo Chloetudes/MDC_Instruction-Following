@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import random
 import time
@@ -15,20 +16,45 @@ from evaluation.core.utils import safe_str, safe_save_excel
 from evaluation.core.blacklist import MODEL_BLACKLIST, is_permission_error
 
 
+def _build_messages_for_reply(query: str, history_context: str = '') -> List[Dict]:
+    if not history_context or history_context.strip() in ('', '[]', 'nan', 'none', 'null'):
+        return [{"role": "user", "content": query}]
+
+    try:
+        history = json.loads(history_context)
+        if not isinstance(history, list) or len(history) == 0:
+            return [{"role": "user", "content": query}]
+
+        messages = []
+        for turn in history:
+            user_text = turn.get('user', '')
+            assistant_text = turn.get('assistant', '')
+            if user_text:
+                messages.append({"role": "user", "content": user_text})
+            if assistant_text:
+                messages.append({"role": "assistant", "content": assistant_text})
+
+        messages.append({"role": "user", "content": query})
+        return messages
+    except (json.JSONDecodeError, TypeError):
+        return [{"role": "user", "content": query}]
+
+
 def generate_reply(
         client: OAIClient,
         model: str,
         query: str,
         temperature: float = 0.7,
         enable_thinking: bool = False,
-        retries: int = 5
+        retries: int = 5,
+        history_context: str = '',
 ) -> Tuple[str, Optional[str], Optional[str]]:
     if isinstance(query, list):
         query = '\n'.join(str(item) for item in query if item is not None)
     elif not isinstance(query, str):
         query = str(query)
 
-    messages = [{"role": "user", "content": query}]
+    messages = _build_messages_for_reply(query, history_context)
     last_err = None
     time.sleep(random.uniform(0.3, 0.8))
 
@@ -96,7 +122,8 @@ def batch_generate_replies(
     if missing_cols:
         raise ValueError(f"题目表缺少必需列: {', '.join(missing_cols)}")
 
-    print(f"  题目数量: {len(df_questions)}  模型数量: {len(model_configs)}")
+    has_history_context = 'history_context' in df_questions.columns
+    print(f"  题目数量: {len(df_questions)}  模型数量: {len(model_configs)}  多轮对话: {'是' if has_history_context else '否'}")
     print(f"  总任务数: {len(df_questions) * len(model_configs)}\n")
 
     clients: Dict[str, OAIClient] = {}
@@ -144,6 +171,11 @@ def batch_generate_replies(
         qid = safe_str(row['qid'])
         query_raw = row['query']
         query = '\n'.join(str(i) for i in query_raw if i is not None) if isinstance(query_raw, list) else safe_str(query_raw)
+        history_context_value = ''
+        if has_history_context:
+            raw_hc = row['history_context']
+            if not pd.isna(raw_hc):
+                history_context_value = str(raw_hc)
 
         for cfg in enriched_configs:
             model_name = cfg['model']
@@ -156,7 +188,8 @@ def batch_generate_replies(
                 'qid': qid, 'query': query,
                 'provider': provider_name, 'model': model_name,
                 'model_name': model_name,
-                'enable_thinking': cfg.get('enable_thinking', False)
+                'enable_thinking': cfg.get('enable_thinking', False),
+                'history_context': history_context_value,
             })
 
     print(f"📝 待处理任务: {len(tasks)} 条\n")
@@ -180,7 +213,8 @@ def batch_generate_replies(
 
         reply, finish_reason, reasoning = generate_reply(
             client, task['model'], task['query'], temperature,
-            enable_thinking=task.get('enable_thinking', False), retries=3
+            enable_thinking=task.get('enable_thinking', False), retries=3,
+            history_context=task.get('history_context', '')
         )
 
         if reply.startswith('<error'):

@@ -3,20 +3,63 @@
 main.py - 评估系统入口
 基于约束的完整评估系统 v9.0 (灵活化重构版)
 
-使用模式：
-  【全链路模式】数据合成 → 评测
-    stages: ['generate_instructions', 'extract_instructions',
-             'evaluate_instructions',   # 可选，质量把控
-             'expand_multiturn',        # 可选，多轮扩展
-             'promote_to_questions',
-             'generate_criteria', 'generate_references',
-             'generate_replies', 'evaluate_replies',
-             'analyze_results', 'generate_report']
+========== 使用模式说明 ==========
 
-  【自定义评测模式】已有 questions.xlsx，直接从评测开始
-    stages: ['generate_criteria', 'generate_references',
-             'generate_replies', 'evaluate_replies',
-             'analyze_results', 'generate_report']
+【模式A：全链路数据合成 + 评测】
+  stages: [
+    'generate_instructions',   # Stage 0: 生成原始指令批次（JSON格式）
+    'extract_instructions',    # Stage 0.5: 解析JSON，提取每条query
+    'evaluate_instructions',   # Stage 1: 可选，质量过滤（status=ok才进入后续）
+    'expand_multiturn',        # Stage 0.7: 可选，单轮→多轮对话扩展
+    'promote_to_questions',    # 将合成数据转为评测题目格式
+    'generate_criteria',       # Stage 1.5: 生成评分标准
+    'generate_references',     # Stage 2: 生成参考答案
+    'generate_replies',        # Stage 3: 多模型生成回复
+    'evaluate_replies',        # Stage 4: 裁判模型评分
+    'analyze_results',         # Stage 5a: 统计分析
+    'generate_report',         # Stage 5b: 可视化报告
+  ]
+
+【模式B：自定义评测（已有 questions.xlsx）】
+  stages: [
+    'generate_criteria',
+    'generate_references',
+    'generate_replies',
+    'evaluate_replies',
+    'analyze_results',
+    'generate_report',
+  ]
+
+【模式C：仅数据合成（不评测）】
+  stages: [
+    'generate_instructions',
+    'extract_instructions',
+    'evaluate_instructions',   # 可选
+    'expand_multiturn',        # 可选
+    'promote_to_questions',
+  ]
+
+========== 数据流说明 ==========
+
+  generated_responses.xlsx  (id, response, L1, L2, L3)
+    ↓ extract_instructions
+  extracted_instructions.xlsx  (qid, original_id, item_num, task_type, query)
+    ↓ evaluate_instructions [可选，过滤低质量]
+  evaluated_instructions.xlsx  (qid, query, raw_response, status, ...)
+    ↓ expand_multiturn [可选，多轮扩展]
+  multiturn_instructions.xlsx  (session_id, turn_id, qid, query, history_context, ...)
+    ↓ promote_to_questions [自动选择最优数据源]
+  questions.xlsx  (qid, query, task_type, ...)
+    ↓ generate_criteria
+  questions_with_criteria.xlsx  (qid, query, evaluation_criteria, ...)
+    ↓ generate_references
+  questions_complete.xlsx  (qid, query, evaluation_criteria, reference, reference_type, ...)
+    ↓ generate_replies
+  replies.xlsx  (qid, model, reply, ...)
+    ↓ evaluate_replies
+  replies.xlsx  (新增 eval_{batch_id} 列)
+    ↓ analyze_results / generate_report
+  analysis_report.xlsx / evaluation_report.html
 """
 from evaluation.pipeline import PipelineManager
 
@@ -58,6 +101,11 @@ CONFIG = {
         'temperature': 0.8,
     },
 
+    # ========== promote_to_questions 数据源（可选）==========
+    # None 时按优先级自动选择：stage1_quality > stage0.7_multiturn > stage0.5_extraction
+    # 设置后直接使用指定文件，忽略自动选择逻辑
+    'promote_source_excel': None,
+
     # ========== 评估批次ID ==========
     'batch_id': "batch_1",
 
@@ -67,7 +115,7 @@ CONFIG = {
     # 'new_batch' - 自动生成新 batch_id（时间戳），保留历史评估
     'overwrite_mode': 'skip',
 
-    # ========== 回复文件路径（三个阶段共用）==========
+    # ========== 回复文件路径（generate_replies/evaluate_replies/analyze/report 共用）==========
     # None 时使用默认 replies/replies.xlsx
     'replies_excel': None,
 
@@ -129,7 +177,7 @@ def main():
 
         if not CONFIG.get('provider') or not CONFIG.get('model'):
             if not pipeline.auto_select_judge_model(test_results):
-                print("❌ 无法自动选择裁判模型")
+                print("❌ 无法自动选择裁判模型，请在 CONFIG 中手动配置 provider 和 model")
                 return
 
         available_models = test_results[test_results['available']]

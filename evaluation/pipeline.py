@@ -98,16 +98,41 @@ class PipelineManager:
         all_stages = list(self.STAGE_DEFINITIONS.keys())
         for stage in stages:
             if stage not in all_stages:
-                raise ValueError(f"未知的阶段: {stage}")
+                raise ValueError(f"未知的阶段: {stage}，可用阶段: {all_stages}")
         return [s for s in all_stages if s in stages]
 
     def _resolve_replies_excel(self) -> str:
-        cfg = self.config
-        dm = self.dir_manager
-        custom_path = cfg.get('replies_excel')
+        custom_path = self.config.get('replies_excel')
         if custom_path:
             return custom_path
-        return dm.get_path("replies", "replies.xlsx")
+        return self.dir_manager.get_path("replies", "replies.xlsx")
+
+    def _resolve_promote_source(self) -> tuple:
+        """
+        按优先级选择 promote_to_questions 的数据源。
+        优先级：用户显式指定 > stage1_quality > stage0.7_multiturn > stage0.5_extraction
+        返回 (source_path, source_label)
+        """
+        import os
+        dm = self.dir_manager
+        cfg = self.config
+
+        explicit_source = cfg.get('promote_source_excel')
+        if explicit_source and os.path.exists(explicit_source):
+            return explicit_source, f'用户指定（{explicit_source}）'
+
+        quality_path = dm.get_path("stage1_quality", "evaluated_instructions.xlsx")
+        multiturn_path = dm.get_path("stage0.7_multiturn", "multiturn_instructions.xlsx")
+        extracted_path = dm.get_path("stage0.5_extraction", "extracted_instructions.xlsx")
+
+        if os.path.exists(quality_path):
+            return quality_path, 'stage1_quality（已过滤）'
+        if os.path.exists(multiturn_path):
+            return multiturn_path, 'stage0.7_multiturn（多轮）'
+        if os.path.exists(extracted_path):
+            return extracted_path, 'stage0.5_extraction（单轮）'
+
+        return None, None
 
     def test_models(self, model_configs: List[Dict[str, str]],
                     output_excel: Optional[str] = None) -> pd.DataFrame:
@@ -128,28 +153,13 @@ class PipelineManager:
         return False
 
     def _execute_promote_to_questions(self):
-        dm = self.dir_manager
-
-        multiturn_path = dm.get_path("stage0.7_multiturn", "multiturn_instructions.xlsx")
-        quality_path = dm.get_path("stage1_quality", "evaluated_instructions.xlsx")
-        extracted_path = dm.get_path("stage0.5_extraction", "extracted_instructions.xlsx")
-
-        import os
-        source_path = None
-        source_label = ''
-
-        if os.path.exists(quality_path):
-            source_path = quality_path
-            source_label = 'stage1_quality（已过滤）'
-        elif os.path.exists(multiturn_path):
-            source_path = multiturn_path
-            source_label = 'stage0.7_multiturn（多轮）'
-        elif os.path.exists(extracted_path):
-            source_path = extracted_path
-            source_label = 'stage0.5_extraction（单轮）'
+        source_path, source_label = self._resolve_promote_source()
 
         if not source_path:
-            raise RuntimeError("promote_to_questions: 找不到可用的输入文件，请先运行 extract_instructions 或 evaluate_instructions")
+            raise RuntimeError(
+                "promote_to_questions: 找不到可用的输入文件。\n"
+                "请先运行 extract_instructions，或在 CONFIG 中设置 'promote_source_excel' 指定自定义路径。"
+            )
 
         print(f"  📖 数据来源: {source_label}")
         df = pd.read_excel(source_path)
@@ -159,7 +169,7 @@ class PipelineManager:
             df = df[df['status'] == 'ok']
             print(f"  📌 按 status=ok 过滤: {before_count} → {len(df)} 条")
 
-        output_path = dm.get_path("questions", "questions.xlsx")
+        output_path = self.dir_manager.get_path("questions", "questions.xlsx")
         if safe_save_excel(df, output_path):
             print(f"  ✅ 题目已写入: {output_path}  共 {len(df)} 条")
 

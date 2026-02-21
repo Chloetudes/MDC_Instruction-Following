@@ -15,6 +15,10 @@ def _is_valid(value: str) -> bool:
     return bool(value and value.strip() and value.lower() not in ('nan', 'none', 'null'))
 
 
+MULTITURN_PASSTHROUGH_COLS = ['session_id', 'turn_id', 'history_context']
+METADATA_PASSTHROUGH_COLS = ['task_type', 'source', 'original_id', 'item_num', 'L1', 'L2', 'L3']
+
+
 class CriteriaGenerator:
     def __init__(self, client: OAIClient, model: str,
                  sysprompt_manager: SyspromptManager, temperature: float = 0.3):
@@ -148,9 +152,12 @@ def batch_generate_criteria(
 
     optional_cols = ['human_rubrics', 'reference', 'reply_evaluation']
     detected_optional = [col for col in optional_cols if col in df.columns]
+    detected_multiturn = [col for col in MULTITURN_PASSTHROUGH_COLS if col in df.columns]
     print(f"  数据行数: {len(df)}")
     if detected_optional:
         print(f"  检测到可选列: {', '.join(detected_optional)}")
+    if detected_multiturn:
+        print(f"  检测到多轮字段: {', '.join(detected_multiturn)}（将透传到输出）")
     print()
 
     results = []
@@ -166,13 +173,15 @@ def batch_generate_criteria(
         except Exception:
             pass
 
+    all_passthrough_cols = optional_cols + METADATA_PASSTHROUGH_COLS + MULTITURN_PASSTHROUGH_COLS
+
     tasks = []
     for _, row in df.iterrows():
         qid = safe_str(row['qid'])
         if qid in existing_qids:
             continue
         task = {'qid': qid, 'query': safe_str(row['query'])}
-        for col in optional_cols + ['task_type', 'source']:
+        for col in all_passthrough_cols:
             if col in df.columns:
                 task[col] = safe_str(row[col])
         tasks.append(task)
@@ -221,7 +230,7 @@ def batch_generate_criteria(
                 'status': 'ok',
                 'timestamp': pd.Timestamp.now(),
             }
-            for col in optional_cols + ['task_type', 'source']:
+            for col in all_passthrough_cols:
                 if col in task:
                     result_row[col] = task[col]
             new_results.append(result_row)
