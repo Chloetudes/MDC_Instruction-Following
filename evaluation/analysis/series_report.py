@@ -12,6 +12,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from typing import Dict, List, Optional
+from scipy.stats import mannwhitneyu
 
 warnings.filterwarnings('ignore')
 
@@ -36,21 +37,28 @@ def _build_series_mapping(all_models: List[str], model_series_config: Dict[str, 
     return model_to_series
 
 
-def _compute_model_overall(replies_df: pd.DataFrame) -> pd.DataFrame:
+def _compute_model_overall(replies_df: pd.DataFrame, total_questions: int = 0) -> pd.DataFrame:
     results = []
     for model in replies_df['model'].unique():
-        scores = replies_df[replies_df['model'] == model]['eval_score'].dropna()
+        model_df = replies_df[replies_df['model'] == model]
+        scores = model_df['eval_score'].dropna()
         if len(scores) == 0:
             continue
-        results.append({
+        question_count = model_df['qid'].nunique()
+        coverage = round(question_count / total_questions * 100, 1) if total_questions > 0 else None
+        row = {
             'model': model,
+            '评测题目数': question_count,
             '评测数量': len(scores),
             '平均分': round(float(scores.mean()), 2),
             '标准差': round(float(scores.std()), 2),
             '中位数': round(float(scores.median()), 2),
             '最高分': round(float(scores.max()), 2),
             '最低分': round(float(scores.min()), 2),
-        })
+        }
+        if coverage is not None:
+            row['题目覆盖率(%)'] = coverage
+        results.append(row)
     return pd.DataFrame(results)
 
 
@@ -101,6 +109,8 @@ def generate_series_report(
     target_df = replies_df[replies_df['model'].isin(target_models)].copy()
     other_df = replies_df[replies_df['model'].isin(other_models)].copy()
 
+    total_questions = replies_df['qid'].nunique()
+
     replies_with_q = replies_df.merge(
         questions_df[[c for c in ['qid', 'L1', 'L2', 'L3', 'difficulty_level'] if c in questions_df.columns]],
         on='qid', how='left'
@@ -113,7 +123,7 @@ def generate_series_report(
 
     with pd.ExcelWriter(output_excel, engine='openpyxl') as writer:
 
-        _write_series_overview(writer, series_name, target_models, target_df, other_df, model_to_series)
+        _write_series_overview(writer, series_name, target_models, target_df, other_df, model_to_series, total_questions)
 
         _write_version_comparison(writer, series_name, target_models, target_df, target_with_q)
 
@@ -134,8 +144,9 @@ def _write_series_overview(
     target_df: pd.DataFrame,
     other_df: pd.DataFrame,
     model_to_series: Dict[str, str],
+    total_questions: int = 0,
 ):
-    overall_target = _compute_model_overall(target_df)
+    overall_target = _compute_model_overall(target_df, total_questions)
     if overall_target.empty:
         return
 
@@ -143,16 +154,30 @@ def _write_series_overview(
     overall_target.insert(0, '系列内排名', overall_target.index + 1)
 
     if not other_df.empty:
-        overall_other = _compute_model_overall(other_df)
+        overall_other = _compute_model_overall(other_df, total_questions)
         overall_other['所属系列'] = overall_other['model'].map(model_to_series)
-        series_avg = (
-            overall_other.groupby('所属系列')['平均分']
-            .mean()
-            .reset_index()
-            .rename(columns={'平均分': '系列平均分'})
-            .sort_values('系列平均分', ascending=False)
-            .reset_index(drop=True)
-        )
+
+        target_scores = target_df['eval_score'].dropna().values
+        series_rows = []
+        for series_label, group in overall_other.groupby('所属系列'):
+            other_scores = other_df[other_df['model'].isin(
+                overall_other[overall_other['所属系列'] == series_label]['model']
+            )]['eval_score'].dropna().values
+            p_value = np.nan
+            if len(target_scores) >= 3 and len(other_scores) >= 3:
+                try:
+                    _, p_value = mannwhitneyu(target_scores, other_scores, alternative='two-sided')
+                except Exception:
+                    pass
+            series_rows.append({
+                '所属系列': series_label,
+                '系列平均分': round(float(group['平均分'].mean()), 2),
+                '模型数量': len(group),
+                '显著性p值': round(float(p_value), 4) if not np.isnan(p_value) else 'N/A',
+                '差异显著': ('是' if (not np.isnan(p_value) and p_value < 0.05) else '否') if not np.isnan(p_value) else 'N/A',
+            })
+
+        series_avg = pd.DataFrame(series_rows).sort_values('系列平均分', ascending=False).reset_index(drop=True)
         series_avg.insert(0, '系列排名', series_avg.index + 1)
 
         target_series_avg = round(float(target_df['eval_score'].dropna().mean()), 2)
@@ -160,13 +185,16 @@ def _write_series_overview(
             '系列排名': '—',
             '所属系列': f'{series_name}（本系列）',
             '系列平均分': target_series_avg,
+            '模型数量': len(target_models),
+            '显著性p值': '—',
+            '差异显著': '—',
         }])
         series_avg = pd.concat([target_row, series_avg], ignore_index=True)
     else:
         series_avg = pd.DataFrame()
 
     start_row = 0
-    pd.DataFrame([[f'【{series_name} 系列模型整体表现】']]).to_excel(
+    pd.DataFrame([[f'【{series_name} 系列模型整体表现（含题目覆盖率）】']]).to_excel(
         writer, sheet_name='1_系列总览', startrow=start_row, index=False, header=False
     )
     start_row += 1
@@ -174,7 +202,7 @@ def _write_series_overview(
     start_row += len(overall_target) + 3
 
     if not series_avg.empty:
-        pd.DataFrame([[f'【各系列横向对比（系列平均分）】']]).to_excel(
+        pd.DataFrame([[f'【各系列横向对比（Mann-Whitney U 显著性检验）】']]).to_excel(
             writer, sheet_name='1_系列总览', startrow=start_row, index=False, header=False
         )
         start_row += 1
