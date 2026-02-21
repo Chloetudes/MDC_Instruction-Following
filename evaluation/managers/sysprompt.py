@@ -11,7 +11,8 @@ class SyspromptManager:
     def _load(self, excel_path: str) -> dict:
         sysprompts = {}
 
-        txt_dir = os.path.join(os.path.dirname(excel_path), "sysprompts")
+        abs_excel_path = os.path.abspath(excel_path)
+        txt_dir = os.path.join(os.path.dirname(abs_excel_path), "sysprompts")
         if os.path.isdir(txt_dir):
             for filename in os.listdir(txt_dir):
                 if filename.endswith(".txt"):
@@ -30,7 +31,7 @@ class SyspromptManager:
 
         print(f"📖 读取Sysprompt配置: {excel_path}")
 
-        if not os.path.exists(excel_path):
+        if not os.path.exists(abs_excel_path):
             print(f"⚠️  Sysprompt文件不存在，将使用空配置")
             if sysprompts:
                 print(f"✅ 仅使用 txt 文件配置，共 {len(sysprompts)} 个:")
