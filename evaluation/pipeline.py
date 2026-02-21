@@ -16,6 +16,7 @@ from evaluation.stages import (
     batch_generate_references,
     batch_generate_replies,
     batch_evaluate_responses_with_cache,
+    generate_evaluation_report,
 )
 from evaluation.analysis import generate_analysis_report
 
@@ -66,6 +67,11 @@ class PipelineManager:
             'name': '评测结果综合分析',
             'input_files': ['questions/questions_complete.xlsx', 'replies/replies.xlsx'],
             'output_files': ['reports/analysis_report.xlsx']
+        },
+        'generate_report': {
+            'name': '可视化报告生成',
+            'input_files': ['questions/questions_complete.xlsx', 'replies/replies.xlsx'],
+            'output_files': ['reports/evaluation_report_*.html', 'reports/evaluation_report_*.md']
         },
     }
 
@@ -203,6 +209,28 @@ class PipelineManager:
                 output_excel=dm.get_path("reports", "analysis_report.xlsx"),
                 human_excel=analysis_cfg.get('human_excel'),
                 eval_batch_id=analysis_cfg.get('eval_batch_id', cfg.get('batch_id')),
+            )
+
+        elif stage == 'generate_report':
+            report_cfg = cfg.get('report', {})
+            replies_file = report_cfg.get(
+                'replies_excel',
+                dm.get_path("replies", "cif_400_all_replies.xlsx")
+            )
+            generate_evaluation_report(
+                questions_excel=dm.get_path("questions", "questions_complete.xlsx"),
+                replies_excel=replies_file,
+                output_dir=dm.get_path("reports", ""),
+                provider=cfg['provider'],
+                model=cfg['model'],
+                sysprompt_manager=sp,
+                human_excel=report_cfg.get('human_excel'),
+                eval_batch_id=report_cfg.get('eval_batch_id', cfg.get('batch_id')),
+                top_n_cases=report_cfg.get('top_n_cases', 20),
+                max_workers=report_cfg.get('max_workers', cfg.get('max_workers', 3)),
+                timeout=report_cfg.get('timeout', cfg.get('timeout', 120)),
+                temperature=report_cfg.get('temperature', 0.3),
+                report_title=report_cfg.get('report_title', '多模型能力评测报告'),
             )
 
     def run(self, stages: List[str]):
