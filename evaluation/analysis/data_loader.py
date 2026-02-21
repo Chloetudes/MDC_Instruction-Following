@@ -117,28 +117,46 @@ def _preprocess_replies(replies_df: pd.DataFrame, eval_column: str):
         replies_df['expert_score'] = pd.to_numeric(replies_df['专家打分'], errors='coerce')
 
 
+def _detect_annotators(human_df: pd.DataFrame) -> list:
+    """
+    自动检测人工标注表中的标注员列，支持任意数量的标注员。
+    识别规则：列名以 ann 开头且包含 score 的列（如 ann1_score, ann3_score_m2）。
+    """
+    annotators = set()
+    for col in human_df.columns:
+        if col.startswith('ann') and 'score' in col:
+            parts = col.split('_')
+            if parts:
+                annotators.add(parts[0])
+    return sorted(annotators)
+
+
 def _preprocess_human(human_df: pd.DataFrame):
     human_df['qid'] = human_df['qid'].astype(str).str.strip()
 
-    for ann in ['ann1', 'ann2']:
-        score_cols = [f'{ann}_score_m1', f'{ann}_score_m2', f'{ann}_score_m3']
-        existing_cols = [c for c in score_cols if c in human_df.columns]
-        if existing_cols:
+    annotators = _detect_annotators(human_df)
+    if not annotators:
+        return
+
+    for ann_idx, ann in enumerate(annotators, 1):
+        multi_model_score_cols = [c for c in human_df.columns if c.startswith(f'{ann}_score_m')]
+        if multi_model_score_cols:
             human_df[f'{ann}_avg_score'] = pd.to_numeric(
-                human_df[existing_cols].mean(axis=1), errors='coerce'
+                human_df[multi_model_score_cols].mean(axis=1), errors='coerce'
             )
         elif f'{ann}_score' in human_df.columns:
             human_df[f'{ann}_avg_score'] = pd.to_numeric(human_df[f'{ann}_score'], errors='coerce')
 
-    avg_cols = [c for c in ['ann1_avg_score', 'ann2_avg_score'] if c in human_df.columns]
+    avg_cols = [f'{ann}_avg_score' for ann in annotators if f'{ann}_avg_score' in human_df.columns]
     if avg_cols:
         human_df['human_avg_score'] = human_df[avg_cols].mean(axis=1)
 
 
 def _build_rater_scores(human_df: pd.DataFrame) -> pd.DataFrame:
     records = []
+    annotators = _detect_annotators(human_df)
 
-    for ann_idx, ann in enumerate(['ann1', 'ann2'], 1):
+    for ann_idx, ann in enumerate(annotators, 1):
         score_col = f'{ann}_avg_score'
         name_col = f'{ann}_name'
         raw_col = f'{ann}_raw_eval'
@@ -149,7 +167,11 @@ def _build_rater_scores(human_df: pd.DataFrame) -> pd.DataFrame:
         for _, row in human_df.iterrows():
             if pd.isna(row[score_col]):
                 continue
-            rater_name = str(row[name_col]) if name_col in human_df.columns and pd.notna(row.get(name_col)) else f'标注员{ann_idx}'
+            rater_name = (
+                str(row[name_col])
+                if name_col in human_df.columns and pd.notna(row.get(name_col))
+                else f'标注员{ann_idx}'
+            )
             records.append({
                 'qid': row['qid'],
                 'model': row.get('model', None),
