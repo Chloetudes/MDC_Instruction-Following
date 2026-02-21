@@ -19,7 +19,7 @@ from evaluation.stages import (
     batch_evaluate_responses_with_cache,
     generate_evaluation_report,
 )
-from evaluation.analysis import generate_analysis_report
+from evaluation.analysis import generate_analysis_report, generate_all_series_reports
 
 
 class PipelineManager:
@@ -296,6 +296,21 @@ class PipelineManager:
                 human_excel=analysis_cfg.get('human_excel'),
                 eval_batch_id=analysis_cfg.get('eval_batch_id', cfg.get('batch_id')),
             )
+
+            model_series_config = analysis_cfg.get('model_series')
+            if model_series_config:
+                import pandas as pd
+                from evaluation.analysis.data_loader import _load_replies, _resolve_eval_column, _preprocess_replies
+                questions_df = pd.read_excel(dm.get_path("questions", "questions_complete.xlsx"))
+                replies_df = _load_replies(replies_file)
+                eval_col = _resolve_eval_column(replies_df, analysis_cfg.get('eval_batch_id', cfg.get('batch_id')))
+                _preprocess_replies(replies_df, eval_col)
+                generate_all_series_reports(
+                    replies_df=replies_df,
+                    questions_df=questions_df,
+                    model_series_config=model_series_config,
+                    output_dir=dm.get_path("reports", ""),
+                )
 
         elif stage == 'generate_report':
             report_cfg = cfg.get('report', {})
