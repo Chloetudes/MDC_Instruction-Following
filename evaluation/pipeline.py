@@ -119,13 +119,16 @@ class PipelineManager:
         sp = self.sysprompt_manager
 
         if stage == 'generate_instructions':
+            generation_cfg = cfg.get('generation', {})
             generate_instructions(
                 output_excel=dm.get_path("stage0_generation", "generated_responses.xlsx"),
                 provider=cfg['provider'], model=cfg['model'],
                 sysprompt_manager=sp,
                 num_batches=cfg['num_instruction_batches'],
                 temperature=cfg['instruction_temperature'],
-                timeout=cfg['timeout']
+                timeout=cfg['timeout'],
+                schema_excel=generation_cfg.get('schema_excel'),
+                see_excel=generation_cfg.get('see_excel'),
             )
 
         elif stage == 'extract_instructions':
