@@ -1,7 +1,22 @@
 # -*- coding: utf-8 -*-
 """
 main.py - 评估系统入口
-基于约束的完整评估系统 v8.0 (数据流重构版)
+基于约束的完整评估系统 v9.0 (灵活化重构版)
+
+使用模式：
+  【全链路模式】数据合成 → 评测
+    stages: ['generate_instructions', 'extract_instructions',
+             'evaluate_instructions',   # 可选，质量把控
+             'expand_multiturn',        # 可选，多轮扩展
+             'promote_to_questions',
+             'generate_criteria', 'generate_references',
+             'generate_replies', 'evaluate_replies',
+             'analyze_results', 'generate_report']
+
+  【自定义评测模式】已有 questions.xlsx，直接从评测开始
+    stages: ['generate_criteria', 'generate_references',
+             'generate_replies', 'evaluate_replies',
+             'analyze_results', 'generate_report']
 """
 from evaluation.pipeline import PipelineManager
 
@@ -9,14 +24,7 @@ from evaluation.pipeline import PipelineManager
 CONFIG = {
     # ========== 执行阶段 ==========
     'stages': [
-        # 'test_models',           # 1 测试模型可用性
-        # 'generate_instructions', # 2 生成指令
-        # 'extract_instructions',  # 3 提取指令
-        # 'evaluate_instructions', # 4 指令质量评估
-        'generate_criteria',       # 5 生成评分标准
-        # 'generate_references',   # 6 生成参考答案（基于评分标准）
-        # 'generate_replies',      # 7 生成回复
-        # 'evaluate_replies'       # 8 评估回复（支持增量评估）
+        'generate_criteria',
     ],
 
     # ========== 基础配置 ==========
@@ -35,19 +43,33 @@ CONFIG = {
     'reply_temperature': 0.6,
     'evaluation_temperature': 0.3,
 
-    'num_instruction_batches': 15,
-    'test_timeout': 300,
+    # ========== 数据合成配置（Stage 0）==========
+    'generation': {
+        'num_batches': 15,
+        'items_per_batch': 3,
+        'schema_excel': None,
+        'see_excel': None,
+    },
 
-    # ========== 数据筛选配置 ==========
-    'data_filters': {
-        'qid_list': None,
-        'model_list': None,
-        'reference_type': None,
-        'batch_size': None,
+    # ========== 多轮扩展配置（Stage 0.7，可选）==========
+    'multiturn': {
+        'min_turns': 3,
+        'max_turns': 8,
+        'temperature': 0.8,
     },
 
     # ========== 评估批次ID ==========
     'batch_id': "batch_1",
+
+    # ========== 评估覆盖策略 ==========
+    # 'skip'      - 跳过已有评估，只评估空白数据（默认）
+    # 'overwrite' - 清空已有评估列，全部重新评估
+    # 'new_batch' - 自动生成新 batch_id（时间戳），保留历史评估
+    'overwrite_mode': 'skip',
+
+    # ========== 回复文件路径（三个阶段共用）==========
+    # None 时使用默认 replies/replies.xlsx
+    'replies_excel': None,
 
     # ========== 待测试模型配置 ==========
     'reply_model_configs': [
@@ -58,12 +80,35 @@ CONFIG = {
     # ========== 并发配置 ==========
     'max_workers': 5,
     'checkpoint_interval': 10,
+    'test_timeout': 300,
+
+    # ========== 数据筛选配置 ==========
+    'data_filters': {
+        'qid_list': None,
+        'model_list': None,
+        'reference_type': None,
+        'batch_size': None,
+    },
+
+    # ========== 分析/报告配置 ==========
+    'analysis': {
+        'human_excel': None,
+        'eval_batch_id': None,
+        'replies_excel': None,
+    },
+    'report': {
+        'human_excel': None,
+        'eval_batch_id': None,
+        'top_n_cases': 20,
+        'report_title': '多模型能力评测报告',
+        'replies_excel': None,
+    },
 }
 
 
 def main():
     print(f"\n{'=' * 60}")
-    print(f"🚀 基于约束的完整评估系统 v8.0 (数据流重构版)")
+    print(f"🚀 基于约束的完整评估系统 v9.0 (灵活化重构版)")
     print(f"{'=' * 60}\n")
 
     pipeline = PipelineManager(CONFIG)
@@ -83,29 +128,9 @@ def main():
             return
 
         if not CONFIG.get('provider') or not CONFIG.get('model'):
-            available_models = test_results[test_results['available']].sort_values('response_time')
-            print("可用模型列表：")
-            for idx, (_, row) in enumerate(available_models.iterrows(), 1):
-                print(f"  {idx}. {row['provider']:20s} / {row['model']:35s} ({row['response_time']:.2f}秒)")
-
-            print("\n请选择裁判模型编号（直接回车使用推荐模型）：", end='')
-            choice = input().strip()
-
-            if choice:
-                try:
-                    selected = available_models.iloc[int(choice) - 1]
-                    CONFIG['provider'] = selected['provider']
-                    CONFIG['model'] = selected['model']
-                    print(f"\n✅ 已选择: {CONFIG['provider']} / {CONFIG['model']}")
-                except Exception:
-                    print("❌ 无效选择，使用推荐模型")
-                    if not pipeline.auto_select_judge_model(test_results):
-                        print("❌ 无法自动选择裁判模型")
-                        return
-            else:
-                if not pipeline.auto_select_judge_model(test_results):
-                    print("❌ 无法自动选择裁判模型")
-                    return
+            if not pipeline.auto_select_judge_model(test_results):
+                print("❌ 无法自动选择裁判模型")
+                return
 
         available_models = test_results[test_results['available']]
         CONFIG['reply_model_configs'] = [{'model': row['model']} for _, row in available_models.iterrows()]

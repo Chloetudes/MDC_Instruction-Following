@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from .stage0_generate import generate_instructions
 from .stage0_5_extract import extract_structured_instructions
+from .stage0_7_multiturn import expand_to_multiturn
 from .stage1_quality import batch_evaluate_instruction_quality
 from .stage1_5_criteria import batch_generate_criteria
 from .stage2_reference import batch_generate_references

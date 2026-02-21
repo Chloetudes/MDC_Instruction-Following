@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 from typing import List, Dict
 
 
@@ -35,10 +36,46 @@ def _build_reference_note(reference_type: str) -> str:
 """
 
 
-def _build_cached_context(query: str, evaluation_criteria: str,
-                           reference: str, reference_type: str) -> str:
-    context = f"""请评估以下AI模型对指令的回复质量。
+def _format_history_context(history_context: str) -> str:
+    if not history_context or history_context.strip() in ('', '[]', 'nan', 'none', 'null'):
+        return ''
 
+    try:
+        history = json.loads(history_context)
+        if not isinstance(history, list) or len(history) == 0:
+            return ''
+
+        lines = ['【历史对话记录】']
+        for turn in history:
+            turn_num = turn.get('turn', '')
+            user_text = turn.get('user', '')
+            assistant_text = turn.get('assistant', '')
+            lines.append(f"\n[第{turn_num}轮]")
+            if user_text:
+                lines.append(f"用户：{user_text}")
+            if assistant_text:
+                lines.append(f"助手：{assistant_text}")
+
+        return '\n'.join(lines)
+    except (json.JSONDecodeError, TypeError):
+        return ''
+
+
+def _build_cached_context(
+    query: str,
+    evaluation_criteria: str,
+    reference: str,
+    reference_type: str,
+    history_context: str = '',
+) -> str:
+    history_section = _format_history_context(history_context)
+
+    context = f"请评估以下AI模型对指令的回复质量。\n"
+
+    if history_section:
+        context += f"\n{history_section}\n"
+
+    context += f"""
 【原始指令】
 {query}
 
@@ -71,10 +108,14 @@ def _build_reply_content(reply: str, model_name: str) -> str:
 """
 
 
-def build_cached_messages_claude(sys_prompt: str, query: str, evaluation_criteria: str,
-                                  reference: str, reply: str, model_name: str,
-                                  reference_type: str = 'model') -> List[Dict]:
-    cached_context = _build_cached_context(query, evaluation_criteria, reference, reference_type)
+def build_cached_messages_claude(
+    sys_prompt: str, query: str, evaluation_criteria: str,
+    reference: str, reply: str, model_name: str,
+    reference_type: str = 'model', history_context: str = '',
+) -> List[Dict]:
+    cached_context = _build_cached_context(
+        query, evaluation_criteria, reference, reference_type, history_context
+    )
     return [
         {"role": "system", "content": sys_prompt},
         {
@@ -91,10 +132,14 @@ def build_cached_messages_claude(sys_prompt: str, query: str, evaluation_criteri
     ]
 
 
-def build_cached_messages_openai(sys_prompt: str, query: str, evaluation_criteria: str,
-                                  reference: str, reply: str, model_name: str,
-                                  reference_type: str = 'model') -> List[Dict]:
-    cached_context = _build_cached_context(query, evaluation_criteria, reference, reference_type)
+def build_cached_messages_openai(
+    sys_prompt: str, query: str, evaluation_criteria: str,
+    reference: str, reply: str, model_name: str,
+    reference_type: str = 'model', history_context: str = '',
+) -> List[Dict]:
+    cached_context = _build_cached_context(
+        query, evaluation_criteria, reference, reference_type, history_context
+    )
     return [
         {"role": "system", "content": sys_prompt},
         {"role": "user", "content": cached_context},
@@ -102,10 +147,14 @@ def build_cached_messages_openai(sys_prompt: str, query: str, evaluation_criteri
     ]
 
 
-def build_cached_messages_gemini(sys_prompt: str, query: str, evaluation_criteria: str,
-                                  reference: str, reply: str, model_name: str,
-                                  reference_type: str = 'model') -> List[Dict]:
-    cached_context = _build_cached_context(query, evaluation_criteria, reference, reference_type)
+def build_cached_messages_gemini(
+    sys_prompt: str, query: str, evaluation_criteria: str,
+    reference: str, reply: str, model_name: str,
+    reference_type: str = 'model', history_context: str = '',
+) -> List[Dict]:
+    cached_context = _build_cached_context(
+        query, evaluation_criteria, reference, reference_type, history_context
+    )
     return [
         {"role": "system", "content": sys_prompt, "cache": True},
         {"role": "user", "content": cached_context, "cache": True},
@@ -113,9 +162,12 @@ def build_cached_messages_gemini(sys_prompt: str, query: str, evaluation_criteri
     ]
 
 
-def build_cached_messages(provider_type: str, sys_prompt: str, query: str,
-                           evaluation_criteria: str, reference: str, reply: str,
-                           model_name: str, reference_type: str = 'model') -> List[Dict]:
+def build_cached_messages(
+    provider_type: str, sys_prompt: str, query: str,
+    evaluation_criteria: str, reference: str, reply: str,
+    model_name: str, reference_type: str = 'model',
+    history_context: str = '',
+) -> List[Dict]:
     builders = {
         'claude': build_cached_messages_claude,
         'openai': build_cached_messages_openai,
@@ -123,9 +175,14 @@ def build_cached_messages(provider_type: str, sys_prompt: str, query: str,
     }
     builder = builders.get(provider_type)
     if builder:
-        return builder(sys_prompt, query, evaluation_criteria, reference, reply, model_name, reference_type)
+        return builder(
+            sys_prompt, query, evaluation_criteria, reference,
+            reply, model_name, reference_type, history_context
+        )
 
-    cached_context = _build_cached_context(query, evaluation_criteria, reference, reference_type)
+    cached_context = _build_cached_context(
+        query, evaluation_criteria, reference, reference_type, history_context
+    )
     user_content = cached_context + _build_reply_content(reply, model_name)
     return [
         {"role": "system", "content": sys_prompt},

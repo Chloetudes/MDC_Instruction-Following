@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import json
 import os
 import random
 from typing import Optional, List, Dict
@@ -13,15 +14,6 @@ from evaluation.managers.sysprompt import SyspromptManager
 
 
 def _load_schema(schema_excel: str) -> tuple:
-    """
-    加载 schema.xlsx，返回 (task_specs, counter_df, schema_df)。
-
-    Sheet1（任务体系表）必需列：L1, L2, L3, count
-    可选列：difficulty, description, example（示范案例）
-
-    Sheet2（计数器表）由系统自动维护，记录每个 L3 子类型已合成的数量。
-    若 Sheet2 不存在则自动初始化。
-    """
     if not schema_excel or not os.path.exists(schema_excel):
         return [], pd.DataFrame(), pd.DataFrame()
 
@@ -31,10 +23,7 @@ def _load_schema(schema_excel: str) -> tuple:
         print(f"⚠️  读取 schema.xlsx 失败: {e}")
         return [], pd.DataFrame(), pd.DataFrame()
 
-    if 'Sheet1' not in xl.sheet_names and xl.sheet_names:
-        schema_sheet = xl.sheet_names[0]
-    else:
-        schema_sheet = 'Sheet1'
+    schema_sheet = 'Sheet1' if 'Sheet1' in xl.sheet_names else xl.sheet_names[0]
 
     try:
         df_schema = xl.parse(schema_sheet)
@@ -77,9 +66,7 @@ def _load_schema(schema_excel: str) -> tuple:
 
         for _ in range(count):
             task_specs.append({
-                'L1': l1,
-                'L2': l2,
-                'L3': l3,
+                'L1': l1, 'L2': l2, 'L3': l3,
                 'task_type': l3 or l2 or l1,
                 'difficulty': difficulty,
                 'description': description,
@@ -100,7 +87,6 @@ def _load_schema(schema_excel: str) -> tuple:
 
 
 def _save_counter(schema_excel: str, df_counter: pd.DataFrame, df_schema: pd.DataFrame):
-    """将更新后的计数器写回 schema.xlsx 的 Sheet2。"""
     if schema_excel and not df_counter.empty:
         try:
             with pd.ExcelWriter(schema_excel, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
@@ -111,12 +97,6 @@ def _save_counter(schema_excel: str, df_counter: pd.DataFrame, df_schema: pd.Dat
 
 
 def _load_seeds(see_excel: str) -> List[Dict]:
-    """
-    加载 see.xlsx 种子库。
-
-    必需列：query
-    可选列：L1, L2, L3, task_type（用于按类型优先匹配）
-    """
     if not see_excel or not os.path.exists(see_excel):
         return []
     try:
@@ -142,7 +122,6 @@ def _load_seeds(see_excel: str) -> List[Dict]:
 
 
 def _pick_seeds(seeds: List[Dict], task_spec: Optional[Dict], max_count: int = 3) -> List[Dict]:
-    """按 L3 > L2 > L1 优先级匹配种子，不足时从全库补充。"""
     if not seeds or not task_spec:
         return random.sample(seeds, min(max_count, len(seeds))) if seeds else []
 
@@ -154,10 +133,10 @@ def _pick_seeds(seeds: List[Dict], task_spec: Optional[Dict], max_count: int = 3
     if l3:
         matched = [s for s in seeds if s.get('L3') == l3 or s.get('task_type') == l3]
     if len(matched) < max_count and l2:
-        extra = [s for s in seeds if s not in matched and (s.get('L2') == l2)]
+        extra = [s for s in seeds if s not in matched and s.get('L2') == l2]
         matched.extend(extra)
     if len(matched) < max_count and l1:
-        extra = [s for s in seeds if s not in matched and (s.get('L1') == l1)]
+        extra = [s for s in seeds if s not in matched and s.get('L1') == l1]
         matched.extend(extra)
     if len(matched) < max_count:
         extra = [s for s in seeds if s not in matched]
@@ -166,7 +145,7 @@ def _pick_seeds(seeds: List[Dict], task_spec: Optional[Dict], max_count: int = 3
     return random.sample(matched, min(max_count, len(matched)))
 
 
-def _build_user_prompt(task_spec: Optional[Dict], seeds: List[Dict]) -> str:
+def _build_user_prompt(task_spec: Optional[Dict], seeds: List[Dict], items_per_batch: int = 3) -> str:
     parts = []
 
     if task_spec:
@@ -202,7 +181,15 @@ def _build_user_prompt(task_spec: Optional[Dict], seeds: List[Dict]) -> str:
         )
         parts.append(f"【参考示例（仅供风格参考，请勿直接复制）】\n{seed_text}")
 
-    parts.append("请生成指令。")
+    parts.append(
+        f"请生成 {items_per_batch} 条数据，以 JSON 数组格式输出，每条包含 task_type 和 query 字段。\n"
+        f"输出格式示例：\n"
+        f'[\n'
+        f'  {{"task_type": "类型名称", "query": "具体的指令或问题内容"}},\n'
+        f'  {{"task_type": "类型名称", "query": "具体的指令或问题内容"}}\n'
+        f']\n'
+        f"只输出 JSON 数组，不要有其他说明文字。"
+    )
     return "\n\n".join(parts)
 
 
@@ -212,6 +199,7 @@ def generate_instructions(
         model: str,
         sysprompt_manager: SyspromptManager,
         num_batches: int = 4,
+        items_per_batch: int = 3,
         temperature: float = 0.8,
         timeout: int = 120,
         schema_excel: Optional[str] = None,
@@ -242,7 +230,7 @@ def generate_instructions(
         print(f"  模式：种子驱动（随机抽取示例作为 few-shot）")
     else:
         print(f"  模式：纯 Sysprompt 驱动")
-    print()
+    print(f"  每批生成数量：{items_per_batch} 条\n")
 
     results = []
     existing_ids = set()
@@ -275,7 +263,7 @@ def generate_instructions(
 
     for batch_idx, task_spec in enumerate(tqdm(pending_tasks, desc="🔄 生成进度", ncols=100)):
         try:
-            user_prompt = _build_user_prompt(task_spec, seeds)
+            user_prompt = _build_user_prompt(task_spec, seeds, items_per_batch)
             messages = [
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt},
@@ -283,7 +271,7 @@ def generate_instructions(
             response = client.chat(model=model, messages=messages, temperature=temperature)
             batch_id = f"BATCH{len(results) + 1:04d}"
 
-            result_row = {'id': batch_id, 'response': response}
+            result_row = {'id': batch_id, 'response': response, 'items_per_batch': items_per_batch}
             if task_spec:
                 result_row['L1'] = task_spec.get('L1', '')
                 result_row['L2'] = task_spec.get('L2', '')

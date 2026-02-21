@@ -11,6 +11,7 @@ from evaluation.core.utils import safe_save_excel
 from evaluation.stages import (
     generate_instructions,
     extract_structured_instructions,
+    expand_to_multiturn,
     batch_evaluate_instruction_quality,
     batch_generate_criteria,
     batch_generate_references,
@@ -34,9 +35,19 @@ class PipelineManager:
             'output_files': ['stage0.5_extraction/extracted_instructions.xlsx']
         },
         'evaluate_instructions': {
-            'name': '指令质量评估',
+            'name': '指令质量评估（可选）',
             'input_files': ['stage0.5_extraction/extracted_instructions.xlsx'],
             'output_files': ['stage1_quality/evaluated_instructions.xlsx']
+        },
+        'expand_multiturn': {
+            'name': '多轮对话扩展（可选）',
+            'input_files': ['stage0.5_extraction/extracted_instructions.xlsx'],
+            'output_files': ['stage0.7_multiturn/multiturn_instructions.xlsx']
+        },
+        'promote_to_questions': {
+            'name': '数据提升为评测题目',
+            'input_files': [],
+            'output_files': ['questions/questions.xlsx']
         },
         'generate_criteria': {
             'name': '评估标准生成',
@@ -90,6 +101,14 @@ class PipelineManager:
                 raise ValueError(f"未知的阶段: {stage}")
         return [s for s in all_stages if s in stages]
 
+    def _resolve_replies_excel(self) -> str:
+        cfg = self.config
+        dm = self.dir_manager
+        custom_path = cfg.get('replies_excel')
+        if custom_path:
+            return custom_path
+        return dm.get_path("replies", "replies.xlsx")
+
     def test_models(self, model_configs: List[Dict[str, str]],
                     output_excel: Optional[str] = None) -> pd.DataFrame:
         tester = ModelAvailabilityTester(timeout=self.config.get('test_timeout', 30))
@@ -108,6 +127,42 @@ class PipelineManager:
         print(f"❌ 无法自动选择裁判模型")
         return False
 
+    def _execute_promote_to_questions(self):
+        dm = self.dir_manager
+
+        multiturn_path = dm.get_path("stage0.7_multiturn", "multiturn_instructions.xlsx")
+        quality_path = dm.get_path("stage1_quality", "evaluated_instructions.xlsx")
+        extracted_path = dm.get_path("stage0.5_extraction", "extracted_instructions.xlsx")
+
+        import os
+        source_path = None
+        source_label = ''
+
+        if os.path.exists(quality_path):
+            source_path = quality_path
+            source_label = 'stage1_quality（已过滤）'
+        elif os.path.exists(multiturn_path):
+            source_path = multiturn_path
+            source_label = 'stage0.7_multiturn（多轮）'
+        elif os.path.exists(extracted_path):
+            source_path = extracted_path
+            source_label = 'stage0.5_extraction（单轮）'
+
+        if not source_path:
+            raise RuntimeError("promote_to_questions: 找不到可用的输入文件，请先运行 extract_instructions 或 evaluate_instructions")
+
+        print(f"  📖 数据来源: {source_label}")
+        df = pd.read_excel(source_path)
+
+        if 'status' in df.columns:
+            before_count = len(df)
+            df = df[df['status'] == 'ok']
+            print(f"  📌 按 status=ok 过滤: {before_count} → {len(df)} 条")
+
+        output_path = dm.get_path("questions", "questions.xlsx")
+        if safe_save_excel(df, output_path):
+            print(f"  ✅ 题目已写入: {output_path}  共 {len(df)} 条")
+
     def execute_stage(self, stage: str):
         stage_def = self.STAGE_DEFINITIONS[stage]
         print(f"\n{'=' * 60}")
@@ -124,8 +179,9 @@ class PipelineManager:
                 output_excel=dm.get_path("stage0_generation", "generated_responses.xlsx"),
                 provider=cfg['provider'], model=cfg['model'],
                 sysprompt_manager=sp,
-                num_batches=cfg['num_instruction_batches'],
-                temperature=cfg['instruction_temperature'],
+                num_batches=generation_cfg.get('num_batches', cfg.get('num_instruction_batches', 15)),
+                items_per_batch=generation_cfg.get('items_per_batch', 3),
+                temperature=cfg.get('instruction_temperature', 0.8),
                 timeout=cfg['timeout'],
                 schema_excel=generation_cfg.get('schema_excel'),
                 see_excel=generation_cfg.get('see_excel'),
@@ -145,10 +201,28 @@ class PipelineManager:
                 sysprompt_manager=sp,
                 constraint_library=self.constraint_library,
                 temperature=cfg.get('evaluation_temperature', 0.3),
-                max_workers=cfg['max_workers'],
-                checkpoint_interval=cfg['checkpoint_interval'],
+                max_workers=cfg.get('max_workers', 4),
+                checkpoint_interval=cfg.get('checkpoint_interval', 10),
                 timeout=cfg['timeout']
             )
+
+        elif stage == 'expand_multiturn':
+            multiturn_cfg = cfg.get('multiturn', {})
+            expand_to_multiturn(
+                input_excel=dm.get_path("stage0.5_extraction", "extracted_instructions.xlsx"),
+                output_excel=dm.get_path("stage0.7_multiturn", "multiturn_instructions.xlsx"),
+                provider=cfg['provider'], model=cfg['model'],
+                sysprompt_manager=sp,
+                min_turns=multiturn_cfg.get('min_turns', 3),
+                max_turns=multiturn_cfg.get('max_turns', 8),
+                temperature=multiturn_cfg.get('temperature', 0.8),
+                max_workers=multiturn_cfg.get('max_workers', cfg.get('max_workers', 3)),
+                checkpoint_interval=cfg.get('checkpoint_interval', 10),
+                timeout=cfg['timeout'],
+            )
+
+        elif stage == 'promote_to_questions':
+            self._execute_promote_to_questions()
 
         elif stage == 'generate_criteria':
             batch_generate_criteria(
@@ -158,7 +232,7 @@ class PipelineManager:
                 sysprompt_manager=sp,
                 temperature=cfg.get('criteria_temperature', 0.3),
                 max_workers=1,
-                checkpoint_interval=cfg['checkpoint_interval'],
+                checkpoint_interval=cfg.get('checkpoint_interval', 10),
                 timeout=cfg['timeout']
             )
 
@@ -170,7 +244,7 @@ class PipelineManager:
                 sysprompt_manager=sp,
                 temperature=cfg.get('reference_temperature', 0.7),
                 max_workers=1,
-                checkpoint_interval=cfg['checkpoint_interval'],
+                checkpoint_interval=cfg.get('checkpoint_interval', 10),
                 timeout=cfg['timeout']
             )
 
@@ -178,34 +252,33 @@ class PipelineManager:
             batch_generate_replies(
                 questions_excel=dm.get_path("questions", "questions_complete.xlsx"),
                 model_configs=cfg['reply_model_configs'],
-                output_excel=dm.get_path("replies", "replies.xlsx"),
-                temperature=cfg['reply_temperature'],
-                max_workers=cfg['max_workers'],
-                checkpoint_interval=cfg['checkpoint_interval'],
+                output_excel=self._resolve_replies_excel(),
+                temperature=cfg.get('reply_temperature', 0.6),
+                max_workers=cfg.get('max_workers', 5),
+                checkpoint_interval=cfg.get('checkpoint_interval', 10),
                 timeout=cfg['timeout']
             )
 
         elif stage == 'evaluate_replies':
+            replies_file = self._resolve_replies_excel()
             batch_evaluate_responses_with_cache(
                 questions_excel=dm.get_path("questions", "questions_complete.xlsx"),
-                replies_excel=dm.get_path("replies", "cif_400_all_replies.xlsx"),
-                output_excel=dm.get_path("replies", "cif_400_all_replies.xlsx"),
+                replies_excel=replies_file,
+                output_excel=replies_file,
                 provider=cfg['provider'], model=cfg['model'],
                 sysprompt_manager=sp,
                 batch_id=cfg.get('batch_id'),
                 data_filters=cfg.get('data_filters'),
                 temperature=cfg.get('evaluation_temperature', 0.3),
                 max_workers=cfg.get('max_workers', 5),
-                checkpoint_interval=cfg['checkpoint_interval'],
-                timeout=cfg['timeout']
+                checkpoint_interval=cfg.get('checkpoint_interval', 10),
+                timeout=cfg['timeout'],
+                overwrite_mode=cfg.get('overwrite_mode', 'skip'),
             )
 
         elif stage == 'analyze_results':
             analysis_cfg = cfg.get('analysis', {})
-            replies_file = analysis_cfg.get(
-                'replies_excel',
-                dm.get_path("replies", "cif_400_all_replies.xlsx")
-            )
+            replies_file = analysis_cfg.get('replies_excel') or self._resolve_replies_excel()
             generate_analysis_report(
                 questions_excel=dm.get_path("questions", "questions_complete.xlsx"),
                 replies_excel=replies_file,
@@ -216,10 +289,7 @@ class PipelineManager:
 
         elif stage == 'generate_report':
             report_cfg = cfg.get('report', {})
-            replies_file = report_cfg.get(
-                'replies_excel',
-                dm.get_path("replies", "cif_400_all_replies.xlsx")
-            )
+            replies_file = report_cfg.get('replies_excel') or self._resolve_replies_excel()
             generate_evaluation_report(
                 questions_excel=dm.get_path("questions", "questions_complete.xlsx"),
                 replies_excel=replies_file,

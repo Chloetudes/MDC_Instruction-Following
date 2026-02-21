@@ -86,11 +86,12 @@ def evaluate_single_reply_with_cache(
         model_name: str,
         reference_type: str = 'model',
         temperature: float = 0.3,
-        retries: int = 3
+        retries: int = 3,
+        history_context: str = '',
 ) -> Tuple[str, str]:
     messages = build_cached_messages(
         provider_type, sys_prompt, query, evaluation_criteria,
-        reference, reply, model_name, reference_type
+        reference, reply, model_name, reference_type, history_context
     )
 
     last_err = None
@@ -170,7 +171,8 @@ def batch_evaluate_responses_with_cache(
         temperature: float = 0.3,
         max_workers: int = 5,
         checkpoint_interval: int = 10,
-        timeout: int = 120
+        timeout: int = 120,
+        overwrite_mode: str = 'skip',
 ):
     print(f"\n{'=' * 60}")
     print(f"🚀 模块4: 批量评估回复（并发评估版）")
@@ -185,7 +187,7 @@ def batch_evaluate_responses_with_cache(
     print(f"✅ 客户端初始化成功\n")
 
     provider_type = detect_provider_type(provider, model)
-    print(f"📋 Provider类型: {provider_type}  并发数: {max_workers}")
+    print(f"📋 Provider类型: {provider_type}  并发数: {max_workers}  覆盖策略: {overwrite_mode}")
     if provider_type in ('claude', 'openai', 'gemini'):
         print(f"✅ 支持Prompt Caching，将启用缓存优化")
     print()
@@ -202,7 +204,8 @@ def batch_evaluate_responses_with_cache(
 
     has_reference = 'reference' in df_questions.columns
     has_reference_type = 'reference_type' in df_questions.columns
-    print(f"  题目数量: {len(df_questions)}  包含参考答案: {'是' if has_reference else '否'}\n")
+    has_history_context = 'history_context' in df_questions.columns
+    print(f"  题目数量: {len(df_questions)}  包含参考答案: {'是' if has_reference else '否'}  多轮对话: {'是' if has_history_context else '否'}\n")
 
     try:
         xls = pd.ExcelFile(replies_excel)
@@ -246,6 +249,13 @@ def batch_evaluate_responses_with_cache(
         df_merged = df_merged[df_merged['query'].notna()]
     print(f"  关联后数据量: {len(df_merged)} 条\n")
 
+    if has_history_context and 'session_id' in df_questions.columns and 'turn_id' in df_questions.columns:
+        print(f"  🔄 检测到多轮对话数据，按 session_id + turn_id 排序")
+        df_merged = df_merged.sort_values(
+            by=['session_id', 'turn_id'],
+            key=lambda col: col.fillna('').astype(str) if col.name == 'session_id' else col.fillna(0).astype(int)
+        ).reset_index(drop=True)
+
     if data_filters:
         original_count = len(df_merged)
         if data_filters.get('qid_list'):
@@ -265,7 +275,7 @@ def batch_evaluate_responses_with_cache(
         if data_filters.get('batch_size') and len(df_merged) > data_filters['batch_size']:
             df_merged = df_merged.head(data_filters['batch_size'])
             print(f"  📌 限制批次大小: {original_count} → {len(df_merged)} 条")
-        print(f"  ✅ 筛���后数据量: {len(df_merged)} 条\n")
+        print(f"  ✅ 筛选后数据量: {len(df_merged)} 条\n")
 
     if len(df_merged) == 0:
         print("⚠️  筛选后无数据需要处理")
@@ -279,29 +289,25 @@ def batch_evaluate_responses_with_cache(
     eval_raw_column = f"{eval_column}_raw"
 
     if eval_column in df_replies.columns:
-        print(f"📊 发现已有评估列: {eval_column}")
-        existing_mask = df_replies[eval_column].apply(is_evaluated) | df_replies[eval_raw_column].apply(is_evaluated)
+        existing_mask = df_replies[eval_column].apply(is_evaluated)
+        if eval_raw_column in df_replies.columns:
+            existing_mask = existing_mask | df_replies[eval_raw_column].apply(is_evaluated)
         existing_evaluated = existing_mask.sum()
-        print(f"  已有评估结果: {existing_evaluated} 条  未评估: {len(df_replies) - existing_evaluated} 条")
+        print(f"📊 发现已有评估列: {eval_column}  已评估: {existing_evaluated} 条")
 
         if existing_evaluated > 0:
-            print(f"  🤔 如何处理已有评估结果？")
-            print(f"    1. 跳过已有评估，只评估空白的 (默认)")
-            print(f"    2. 覆盖所有评估")
-            print(f"    3. 创建新的批次")
-            choice = input(f"  请选择 (1/2/3): ").strip()
-
-            if choice == '2':
-                print("  ⚠️  将覆盖所有评估结果")
+            if overwrite_mode == 'overwrite':
+                print(f"  ⚠️  overwrite_mode=overwrite，将覆盖所有已有评估结果")
                 df_replies[eval_column] = np.nan
-                df_replies[eval_raw_column] = ''
-            elif choice == '3':
+                if eval_raw_column in df_replies.columns:
+                    df_replies[eval_raw_column] = ''
+            elif overwrite_mode == 'new_batch':
                 batch_id = f"eval_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}"
                 eval_column = f"eval_{batch_id}"
                 eval_raw_column = f"{eval_column}_raw"
-                print(f"  新的批次ID: {batch_id}")
+                print(f"  🆕 overwrite_mode=new_batch，新批次ID: {batch_id}")
             else:
-                print("  ✅ 将跳过已有评估，只评估空白数据")
+                print(f"  ✅ overwrite_mode=skip，跳过已有评估，只评估空白数据")
 
     if eval_column not in df_replies.columns:
         df_replies[eval_column] = np.nan
@@ -322,11 +328,17 @@ def batch_evaluate_responses_with_cache(
 
         reply_idx = df_replies[reply_mask].index[0]
         eval_value = df_replies.loc[reply_idx, eval_column]
-        raw_value = df_replies.loc[reply_idx, eval_raw_column]
+        raw_value = df_replies.loc[reply_idx, eval_raw_column] if eval_raw_column in df_replies.columns else np.nan
 
         if is_evaluated(eval_value) or is_evaluated(raw_value):
             already_evaluated += 1
             continue
+
+        history_context_value = ''
+        if has_history_context and 'history_context' in row.index:
+            raw_hc = row['history_context']
+            if not pd.isna(raw_hc):
+                history_context_value = str(raw_hc)
 
         tasks.append({
             'merged_index': i, 'qid': qid, 'model': model_name,
@@ -335,6 +347,7 @@ def batch_evaluate_responses_with_cache(
             'reference': safe_str(row['reference']) if has_reference else '',
             'reference_type': safe_str(row['reference_type']) if has_reference_type else 'model',
             'reply': safe_str(row['reply']),
+            'history_context': history_context_value,
             'batch_id': batch_id, 'eval_column': eval_column,
             'eval_raw_column': eval_raw_column, 'reply_idx': reply_idx
         })
@@ -357,24 +370,28 @@ def batch_evaluate_responses_with_cache(
                 safe_str(row['reference']) if has_reference else '',
                 safe_str(row['reply']), task['model'],
                 safe_str(row['reference_type']) if has_reference_type else 'model',
-                temperature, retries=3
+                temperature, retries=3,
+                history_context=task.get('history_context', '')
             )
 
             if error_msg:
                 return {'qid': task['qid'], 'model': task['model'], 'batch_id': task['batch_id'],
                         'raw_evaluation': error_msg, 'scores': {}, 'total_score': np.nan,
-                        'error': error_msg, 'status': 'error', 'reply_idx': task['reply_idx']}
+                        'error': error_msg, 'status': 'error', 'reply_idx': task['reply_idx'],
+                        'eval_column': task['eval_column'], 'eval_raw_column': task['eval_raw_column']}
 
             scores = extract_scores_from_evaluation(raw_eval)
             return {'qid': task['qid'], 'model': task['model'], 'batch_id': task['batch_id'],
                     'raw_evaluation': raw_eval, 'scores': scores,
                     'total_score': scores.get('total_score', np.nan),
-                    'error': '', 'status': 'ok', 'reply_idx': task['reply_idx']}
+                    'error': '', 'status': 'ok', 'reply_idx': task['reply_idx'],
+                    'eval_column': task['eval_column'], 'eval_raw_column': task['eval_raw_column']}
 
         except Exception as e:
             return {'qid': task['qid'], 'model': task['model'], 'batch_id': task['batch_id'],
                     'raw_evaluation': f"<error: {str(e)}>", 'scores': {}, 'total_score': np.nan,
-                    'error': str(e), 'status': 'error', 'reply_idx': task['reply_idx']}
+                    'error': str(e), 'status': 'error', 'reply_idx': task['reply_idx'],
+                    'eval_column': task['eval_column'], 'eval_raw_column': task['eval_raw_column']}
 
     eval_results = []
     failed_count = 0
@@ -390,15 +407,23 @@ def batch_evaluate_responses_with_cache(
                 result = future.result()
                 eval_results.append(result)
 
+                result_eval_col = result.get('eval_column', eval_column)
+                result_raw_col = result.get('eval_raw_column', eval_raw_column)
+
+                if result_eval_col not in df_replies.columns:
+                    df_replies[result_eval_col] = np.nan
+                if result_raw_col not in df_replies.columns:
+                    df_replies[result_raw_col] = ''
+
                 idx = result['reply_idx']
                 if idx is not None:
-                    df_replies.loc[idx, task['eval_column']] = result['total_score']
-                    df_replies.loc[idx, task['eval_raw_column']] = result['raw_evaluation']
+                    df_replies.loc[idx, result_eval_col] = result['total_score']
+                    df_replies.loc[idx, result_raw_col] = result['raw_evaluation']
                 else:
                     mask = (df_replies['qid'] == result['qid']) & (df_replies['model'] == result['model'])
                     if mask.any():
-                        df_replies.loc[mask.idxmax(), task['eval_column']] = result['total_score']
-                        df_replies.loc[mask.idxmax(), task['eval_raw_column']] = result['raw_evaluation']
+                        df_replies.loc[mask.idxmax(), result_eval_col] = result['total_score']
+                        df_replies.loc[mask.idxmax(), result_raw_col] = result['raw_evaluation']
 
                 completed_count += 1
                 if result['status'] == 'error':

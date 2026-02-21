@@ -65,7 +65,7 @@ def batch_evaluate_instruction_quality(
     evaluator = InstructionQualityEvaluator(client, model, sysprompt_manager, temperature)
 
     df = pd.read_excel(input_excel)
-    required_cols = ['id', 'query']
+    required_cols = ['qid', 'query']
     missing_cols = [col for col in required_cols if col not in df.columns]
     if missing_cols:
         raise ValueError(f"缺少必需列: {', '.join(missing_cols)}")
@@ -74,28 +74,28 @@ def batch_evaluate_instruction_quality(
     print(f"  数据行数: {len(df)}\n")
 
     results = []
-    existing_ids = set()
+    existing_qids = set()
 
     if os.path.exists(output_excel):
         try:
             df_existing = pd.read_excel(output_excel)
             for _, row in df_existing.iterrows():
-                existing_ids.add(str(row['id']))
+                existing_qids.add(str(row['qid']))
                 results.append(row.to_dict())
-            print(f"💾 发现已有结果: {len(existing_ids)} 条")
+            print(f"💾 发现已有结果: {len(existing_qids)} 条")
         except Exception:
             pass
 
     tasks = []
     for _, row in df.iterrows():
-        task_id = safe_str(row['id'])
-        if task_id in existing_ids:
+        qid = safe_str(row['qid'])
+        if qid in existing_qids:
             continue
-        task = {'id': task_id, 'query': safe_str(row['query'])}
+        task = {'qid': qid, 'query': safe_str(row['query'])}
         if has_reference:
             task['reference'] = safe_str(row['reference'])
-        for col in ['original_id', 'instruction_num', 'task_type']:
-            if col in row:
+        for col in ['original_id', 'item_num', 'task_type', 'session_id', 'turn_id', 'history_context']:
+            if col in df.columns:
                 task[col] = safe_str(row[col])
         tasks.append(task)
 
@@ -114,7 +114,7 @@ def batch_evaluate_instruction_quality(
             raw_response, error_msg = evaluator.evaluate(task['query'])
 
             if error_msg:
-                tqdm.write(f"⚠️  任务 {task['id']} 评估失败")
+                tqdm.write(f"⚠️  任务 {task['qid']} 评估失败")
                 failed_count += 1
                 consecutive_failures += 1
                 if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
@@ -123,13 +123,13 @@ def batch_evaluate_instruction_quality(
 
             consecutive_failures = 0
             result_row = {
-                'id': task['id'], 'query': task['query'],
+                'qid': task['qid'], 'query': task['query'],
                 'raw_response': raw_response, 'error': error_msg,
                 'status': 'ok', 'timestamp': pd.Timestamp.now()
             }
             if has_reference and 'reference' in task:
                 result_row['reference'] = task['reference']
-            for col in ['original_id', 'instruction_num', 'task_type']:
+            for col in ['original_id', 'item_num', 'task_type', 'session_id', 'turn_id', 'history_context']:
                 if col in task:
                     result_row[col] = task[col]
             new_results.append(result_row)
@@ -142,7 +142,7 @@ def batch_evaluate_instruction_quality(
         except RuntimeError:
             raise
         except Exception as e:
-            tqdm.write(f"❌ 任务 {task['id']} 异常: {e}")
+            tqdm.write(f"❌ 任务 {task['qid']} 异常: {e}")
             failed_count += 1
             consecutive_failures += 1
             if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
