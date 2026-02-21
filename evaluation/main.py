@@ -63,7 +63,14 @@ main.py - 评估系统入口
 """
 import sys
 import os
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+_this_file = os.path.abspath(__file__)
+_evaluation_pkg_dir = os.path.dirname(_this_file)
+_project_root = os.path.dirname(_evaluation_pkg_dir)
+
+if _project_root not in sys.path:
+    sys.path.insert(0, _project_root)
+
 from evaluation.pipeline import PipelineManager
 
 
