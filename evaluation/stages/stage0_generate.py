@@ -218,8 +218,8 @@ def generate_instructions(
 
     sys_prompt = sysprompt_manager.get('instruction_generation', '')
     if not sys_prompt:
-        print("⚠️  未配置 instruction_generation sysprompt")
-        return
+        print("❌ 未配置 instruction_generation sysprompt，请检查 data/sysprompts/instruction_generation.txt 是否存在且有内容")
+        raise RuntimeError("缺少 instruction_generation sysprompt，无法生成指令")
 
     schema_tasks, df_counter, df_schema = _load_schema(schema_excel) if schema_excel else ([], pd.DataFrame(), pd.DataFrame())
     seeds = _load_seeds(see_excel) if see_excel else []
