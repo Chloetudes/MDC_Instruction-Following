@@ -6,6 +6,19 @@ config.py - 配置文件
 【使用说明】
 将所有 "YOUR_API_KEY_HERE" 替换为你的真实 API Key。
 下载完整代码后直接替换此文件即可。
+
+【最少配置要求】
+至少需要配置以下 provider 之一（用于裁判模型）：
+  - idealab       → 内部服务，推荐优先使用
+  - routify_claude → Claude 系列，稳定可靠
+
+被测模型所用的 provider 也需要配置对应的 API Key。
+例如：被测模型为 qwen3-max，其 provider 为 bailian，需配置 bailian 的 key。
+
+【快速上手】
+1. 配置好 API Key 后，运行：python agent_runner.py --mode check
+2. 自检通过后，运行：python agent_runner.py --mode test
+3. 正式评测：python agent_runner.py --mode full
 """
 
 import os

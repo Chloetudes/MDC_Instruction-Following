@@ -19,6 +19,9 @@
 ## 二、快速启动
 
 ```bash
+# Step 0: 安装依赖
+pip install -r requirements.txt
+
 # Step 1: 自检（确认环境就绪）
 python agent_runner.py --mode check
 
