@@ -1,4 +1,4 @@
-# CIF 评测系统 — 全流程运行效果演示
+# 复杂指令遵循评测系统 — 全流程运行效果演示
 
 > 本文档通过模拟真实数据，逐阶段展示每个 Pipeline Stage 的输入 Excel、控制台输出、以及输出 Excel 的字段结构，便于验证系统逻辑是否符合预期。
 
@@ -39,7 +39,7 @@ CONFIG = {
     'stages': ['generate_criteria', 'generate_references', 'generate_replies', 'evaluate_replies'],
     'sysprompt_excel': "data/evaluation/sysprompts.xlsx",
     'output_base_dir': "outputs/evaluation",
-    'provider': "idealab",
+    'provider': "openai",  # 与 config.py 中配置一致
     'model': "claude_sonnet4_5",
     'timeout': 300,
     'criteria_temperature': 0.3,
@@ -790,7 +790,7 @@ class TestFindPrimes(unittest.TestCase):
   题目数量: 3  模型数量: 2  多轮对话: 否
   总任务数: 6
 
-  ✅ idealab 客户端初始化成功 (协议: openai)
+  ✅ 客户端初始化成功 (协议: openai)
 
 💾 发现已有结果: 0 条，将跳过
 

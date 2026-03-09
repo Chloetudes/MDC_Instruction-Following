@@ -1,109 +1,126 @@
-# 多模型能力评测系统
+# 复杂指令遵循评测框架
 
-基于约束的中文复杂指令跟随能力评测框架，支持全流程自动化：指令合成 → 评分标准生成 → 参考答案生成 → 多模型作答 → 裁判评分 → 可视化报告。
+基于约束的中文复杂指令跟随能力评测框架，支持全流程自动化：**题目与评分标准 → 参考答案 → 多模型回复 → 裁判评分 → 维度化分析（D1–D5）→ 可视化报告**。适用于自建/公开数据混合、按来源切换统计口径（公开/自建/全量），并可输出维度失分率、L1 失分特征与数据合成建议。
+
+---
+
+## 特性
+
+- **阶段化 Pipeline**：可配置阶段（生成标准、参考、回复、评估、分析、报告），支持断点续跑与缓存。
+- **五维度评分（D1–D5）**：业务理解、流程步骤、边界范围、格式形式、内容质量；支持从裁判原始输出（eval_raw）解析检查点并汇总失分率。
+- **统计口径可切换**：全量 / 仅公开 / 仅自建（含 R）/ 自定义 source 筛选，便于对比公开基准与自建难度。
+- **项目化配置**：以 `outputs/<project_id>/config.json` 为主配置入口，无需改代码即可切换批次与报告参数。
 
 ---
 
 ## 快速开始
 
-### 第一步：安装依赖
+### 1. 安装依赖
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### 第二步：配置 API Key
+### 2. 配置 API Key（裁判与回复模型）
 
-打开 `config.py`，**至少配置一个 provider** 的 API Key（用于裁判模型）：
-
-```python
-# 推荐配置其中一个：
-"idealab": ProviderConfig(
-    api_key="你的真实 API Key",   # ← 替换这里
-    ...
-),
-
-# 或者：
-"routify_claude": ProviderConfig(
-    api_key="你的真实 API Key",   # ← 替换这里
-    ...
-),
-```
-
-然后在 `evaluation/main.py` 的 `CONFIG` 中确认裁判模型和被测模型：
-
-```python
-CONFIG = {
-    'provider': "idealab",           # 裁判模型的 provider
-    'model': "claude_sonnet4_5",     # 裁判模型名称
-    'reply_model_configs': [
-        {"model": "qwen3-max"},      # 被测模型列表
-        {"model": "gpt-4o"},
-    ],
-}
-```
-
-### 第三步：自检
+**请勿提交真实 Key 到仓库。**
 
 ```bash
-python agent_runner.py --mode check
+cp config.example.py config.py
+# 编辑 config.py，将 YOUR_*_API_KEY_HERE 替换为真实 key，或使用环境变量
 ```
 
-看到 `✅ 自检通过` 即可继续。
+支持通过环境变量配置，例如：`OPENAI_API_KEY`、`DASHSCOPE_API_KEY`、`OPENROUTER_API_KEY`。  
+`config.py` 已加入 `.gitignore`，不会被提交。
 
-### 第四步：运行评测
+### 3. 准备数据与项目配置
+
+- **系统提示词**：本仓库不包含真实提示词。请复制占位示例并填写：`cp -r data/sysprompts.example data/sysprompts`，再编辑 `data/sysprompts/*.txt`。详见 [data/sysprompts.example/README.md](data/sysprompts.example/README.md)。  
+- 题目表：至少包含 `qid`、`query`，推荐含 `L1`、`source`。  
+- 回复表：至少包含 `qid`、`model`、`reply`；若已跑过评测，需有 `eval_<batch_id>` 与 `eval_<batch_id>_raw`。  
+- 数据格式详见：[docs/DATA_SCHEMA.md](docs/DATA_SCHEMA.md)
+
+在项目目录下创建配置（示例）：
 
 ```bash
-# 测试模式（验证全流程，约 5-10 分钟）
-python agent_runner.py --mode test
+mkdir -p outputs/my_project
+cp config.example.json outputs/my_project/config.json
+# 按需修改 outputs/my_project/config.json（如 project_id、data_batch、eval_batch_id、stages）
+```
 
-# 完整评测（正式运行，约 2-8 小时）
-python agent_runner.py --mode full
+将题目表、回复表放到 `outputs/my_project/questions/`、`outputs/my_project/replies/`，或在 `config.json` 中指定 `questions_excel`、`replies_excel` 路径。
 
-# 中途中断后续跑
-python agent_runner.py --mode resume
+### 4. 运行
+
+**推荐入口**（使用项目 config）：
+
+```bash
+python -m evaluation.main
+```
+
+程序会读取 `evaluation/main.py` 中的默认 CONFIG，若存在 `project_id`，则加载 `outputs/<project_id>/config.json` 并覆盖，按其中 `stages` 依次执行（如 `analyze_results`、`generate_report`）。
+
+---
+
+## 目录结构（公开版）
+
+```
+├── config.example.py      # 配置模板，复制为 config.py 并填写 key
+├── config.example.json    # 项目配置示例
+├── evaluation/
+│   ├── main.py            # 入口与默认 CONFIG
+│   ├── config_loader.py   # 项目 config 合并与阶段解析
+│   ├── pipeline.py        # 阶段调度
+│   ├── analysis/          # 统计、排名、报告生成
+│   └── stages/            # 各阶段实现（评估、报告等）
+├── outputs/               # 输出目录（不提交真实数据）
+│   └── .gitkeep
+├── docs/
+│   ├── CONFIG_PLAYBOOK.md # 配置与流程速查
+│   ├── STAGES_REFERENCE.md# 阶段列表与 preset
+│   ├── DATA_SCHEMA.md     # 题目/回复表字段说明
+│   └── ...
+├── requirements.txt
+└── README.md
 ```
 
 ---
 
-## 目录结构
+## 评测流程概览
 
 ```
-├── config.py                    # API Key 和模型配置（需要修改）
-├── evaluation/main.py           # 评测参数配置（需要修改）
-├── agent_runner.py              # 运行入口
-├── requirements.txt             # Python 依赖
-├── data/
-│   └── sysprompts/              # 各阶段系统提示词（已内置）
-│       ├── instruction_generation.txt
-│       ├── criteria_generation.txt
-│       ├── reference_generation.txt
-│       ├── reply_evaluation.txt
-│       └── ...
-└── outputs/evaluation/          # 所有输出文件（自动创建）
-    ├── questions/               # 评测题目
-    ├── replies/                 # 各模型回复和评分
-    └── reports/                 # 最终报告（HTML + Excel）
+题目表(questions) → [生成标准/参考] → 回复表(replies) → [裁判评估] → eval_* / eval_*_raw
+       → 统计分析(analyze_results) → 报告(generate_report) → Markdown/HTML
 ```
+
+统计与报告支持：综合榜单、维度失分率（D1–D5）、L1 失分特征、D5×L1 内容质量分布、数据合成建议等。  
+阶段与 preset 完整列表见：[docs/STAGES_REFERENCE.md](docs/STAGES_REFERENCE.md)  
+配置说明见：[docs/CONFIG_PLAYBOOK.md](docs/CONFIG_PLAYBOOK.md)。
 
 ---
 
-## 评测流程
+## 文档索引
 
-```
-指令生成 → 指令提取 → 质量过滤（可选）→ 多轮扩展（可选）
-    → 评分标准生成 → 参考答案生成 → 多模型作答 → 裁判评分
-    → 统计分析 → 可视化报告
-```
-
-最终产物：
-- `outputs/evaluation/reports/evaluation_report_*.html` — 可视化评测报告
-- `outputs/evaluation/reports/analysis_report.xlsx` — 统计分析数据
+| 文档 | 说明 |
+|------|------|
+| [docs/SYSTEM_OVERVIEW.md](docs/SYSTEM_OVERVIEW.md) | **系统流程与架构概览**（推荐先读） |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 全链路架构与模块设计 |
+| [docs/CONFIG_PLAYBOOK.md](docs/CONFIG_PLAYBOOK.md) | 配置与流程速查 |
+| [docs/STAGES_REFERENCE.md](docs/STAGES_REFERENCE.md) | 阶段列表与 preset 代号 |
+| [docs/DATA_SCHEMA.md](docs/DATA_SCHEMA.md) | 题目表、回复表字段说明 |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 使用指南 |
 
 ---
 
-## 详细文档
+## 只放方法论分享到 GitHub
 
-- **操作指南**：[AGENT_GUIDE.md](AGENT_GUIDE.md) — 各阶段详解、常见报错处理
-- **架构设计**：[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
-- **使用指南**：[docs/USER_GUIDE.md](docs/USER_GUIDE.md)
+本仓库按「只放方法论」整理：不含真实 API Key、不含业务数据与评测结果。  
+
+- **发布前自检**：[docs/SHARING_GITHUB.md](docs/SHARING_GITHUB.md) — 自检项与取消不应提交的暂存文件。  
+- **推送到你的仓库**：[docs/PUSH_TO_YOUR_GITHUB.md](docs/PUSH_TO_YOUR_GITHUB.md) — 填入你的 GitHub 仓库地址并按步骤执行即可推送。
+
+---
+
+## 许可证
+
+本项目采用 [MIT License](LICENSE)。使用与二次开发时请保留版权与许可说明。

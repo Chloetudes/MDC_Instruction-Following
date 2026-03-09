@@ -59,7 +59,7 @@ class ModelBlacklist:
             if item['reason']:
                 reason_preview = item['reason'][:100] + "..." if len(item['reason']) > 100 else item['reason']
                 print(f"     原因: {reason_preview}")
-        print(f"  💡 提示: 黑名单仅在本次运行有效，下次运行会重新验证")
+        print(f"  💡 提示: 本次运行中被禁用的模型将写入表格「可用状态=否」，下次加载可选模型时将自动排除")
         print(f"{'=' * 60}\n")
 
 
@@ -74,3 +74,15 @@ def is_permission_error(error_msg: str) -> bool:
     ]
     error_msg_lower = error_msg.lower()
     return any(keyword.lower() in error_msg_lower for keyword in error_keywords)
+
+
+def is_connection_error(error_msg: str) -> bool:
+    """判断是否为连接/服务端中断类错误（如 RemoteDisconnected、Connection aborted）。"""
+    error_keywords = [
+        'connection aborted', 'remote end closed', 'remotedisconnected',
+        'connection reset', 'connection refused', 'connection error',
+        'timeout', 'timed out', 'remote end closed connection without response',
+        'eof occurred', 'broken pipe', 'connection refused'
+    ]
+    error_msg_lower = (error_msg or "").lower()
+    return any(kw in error_msg_lower for kw in error_keywords)

@@ -1,0 +1,14 @@
+{
+  "idealab:gemini-3-pro-preview": {
+    "last_tested": "2026-03-06T12:19:53.567161",
+    "available": true
+  },
+  "idealab:claude_sonnet4_5": {
+    "last_tested": "2026-03-06T23:31:49.594008",
+    "available": true
+  },
+  "idealab:claude-opus-4-5": {
+    "last_tested": "2026-03-06T18:40:17.063473",
+    "available": true
+  }
+}

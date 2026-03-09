@@ -184,7 +184,7 @@ def check_prerequisites() -> dict:
 def generate_minimal_test_data():
     """
     生成最小测试数据集（3条指令），用于验证全流程可通。
-    直接写入 outputs/evaluation/questions/questions.xlsx，跳过 stage0-1。
+    直接写入 outputs/questions/questions.xlsx，跳过 stage0-1。
     """
     import pandas as pd
     from evaluation.managers.directory import DirectoryManager
@@ -263,7 +263,7 @@ def generate_minimal_test_data():
 
     df = pd.DataFrame(test_questions)
 
-    dm = DirectoryManager("outputs/evaluation")
+    dm = DirectoryManager("outputs")
     output_path = dm.get_path("questions", "questions.xlsx")
 
     df.to_excel(output_path, index=False)
@@ -341,7 +341,7 @@ def run_test_mode():
         }
     )
 
-    print("\n✅ 测试模式完成！请检查 outputs/evaluation/ 目录下的输出文件。")
+    print("\n✅ 测试模式完成！请检查 outputs/ 目录下的输出文件。")
 
 
 def run_full_mode():
@@ -368,7 +368,7 @@ def run_full_mode():
         ]
     )
 
-    print("\n✅ 完整评测流程完成！报告位于 outputs/evaluation/reports/")
+    print("\n✅ 完整评测流程完成！报告位于 outputs/reports/")
 
 
 def run_resume_mode():
@@ -382,7 +382,7 @@ def run_resume_mode():
     print("🔄 续跑模式：从上次中断处继续")
     print("=" * 60)
 
-    output_base = Path("outputs/evaluation")
+    output_base = Path("outputs")
 
     stage_file_map = {
         'generate_instructions': output_base / "stage0_generation" / "generated_responses.xlsx",

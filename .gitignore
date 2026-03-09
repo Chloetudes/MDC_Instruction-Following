@@ -5,15 +5,48 @@ node_modules/
 dist/
 build/
 
+# 本地配置（含 API Key，勿提交）
+config.py
+
+# 项目输出与本地数据（勿提交到公开仓库）
+outputs/
+evaluation/outputs/
+!outputs/.gitkeep
+!outputs/README.md
+
+# Excel 数据（题目/回复/报告含业务数据时不提交）
+*.xlsx
+
+# 系统提示词（含业务设计，不提交；使用前请复制 data/sysprompts.example 为 data/sysprompts 并填写）
+data/sysprompts/
+data/sysprompts.xlsx
+**/sysprompts.xlsx
+
+# 报告分析缓存（避免重复跑 AI 分析）
+.report_cache/
+**/.report_cache/
+
 # 环境变量文件
 .env
 .env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+*.egg-info/
+.eggs/
 
 # 日志文件
 *.log
 
-# 编辑器配置
+# 编辑器与 IDE
 .vscode/
+.idea/
 
-# cursor 相关
+# Cursor 等（本地技能与规则不提交）
 .cursorrules
+.cursor/
+.plan/

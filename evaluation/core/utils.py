@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import hashlib
 import os
 import re
 import math
@@ -19,6 +20,25 @@ def safe_str(value) -> str:
         except Exception:
             pass
     return str(value)
+
+
+def _norm_for_fingerprint(value) -> str:
+    """Normalize value for fingerprint: strip, treat NaN/None as empty."""
+    s = safe_str(value)
+    return s.replace("\r\n", "\n").replace("\r", "\n").strip()
+
+
+def compute_input_fingerprint(row: dict, columns: list) -> str:
+    """
+    根据指定列计算行的输入指纹，用于增量更新：仅当指纹变化时才重新生成/覆盖。
+    row: 字典或可下标对象；columns: 列名列表（顺序固定）。
+    """
+    parts = []
+    for col in columns:
+        val = row.get(col) if isinstance(row, dict) else getattr(row, col, None)
+        parts.append(f"{col}={_norm_for_fingerprint(val)}")
+    text = "|".join(parts)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def sanitize_text(text: str) -> str:

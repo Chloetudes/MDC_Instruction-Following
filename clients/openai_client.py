@@ -113,6 +113,8 @@ class OAIClient:
                 "temperature": temperature,
             }
         }
+        if "max_tokens" in kwargs:
+            payload["parameters"]["max_tokens"] = kwargs["max_tokens"]
 
         if kwargs.get("enable_thinking", True):
             payload["parameters"]["enable_thinking"] = True

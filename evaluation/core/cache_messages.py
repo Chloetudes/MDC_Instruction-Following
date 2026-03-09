@@ -67,6 +67,7 @@ def _build_cached_context(
     reference: str,
     reference_type: str,
     history_context: str = '',
+    expert_opinions: str = '',
 ) -> str:
     history_section = _format_history_context(history_context)
 
@@ -75,6 +76,12 @@ def _build_cached_context(
     if history_section:
         context += f"\n{history_section}\n"
 
+    if expert_opinions and str(expert_opinions).strip():
+        context += f"""
+【专家参考（仅供对齐打分尺度）】
+{expert_opinions.strip()}
+
+"""
     context += f"""
 【原始指令】
 {query}
@@ -112,9 +119,10 @@ def build_cached_messages_claude(
     sys_prompt: str, query: str, evaluation_criteria: str,
     reference: str, reply: str, model_name: str,
     reference_type: str = 'model', history_context: str = '',
+    expert_opinions: str = '',
 ) -> List[Dict]:
     cached_context = _build_cached_context(
-        query, evaluation_criteria, reference, reference_type, history_context
+        query, evaluation_criteria, reference, reference_type, history_context, expert_opinions
     )
     return [
         {"role": "system", "content": sys_prompt},
@@ -136,9 +144,10 @@ def build_cached_messages_openai(
     sys_prompt: str, query: str, evaluation_criteria: str,
     reference: str, reply: str, model_name: str,
     reference_type: str = 'model', history_context: str = '',
+    expert_opinions: str = '',
 ) -> List[Dict]:
     cached_context = _build_cached_context(
-        query, evaluation_criteria, reference, reference_type, history_context
+        query, evaluation_criteria, reference, reference_type, history_context, expert_opinions
     )
     return [
         {"role": "system", "content": sys_prompt},
@@ -151,9 +160,10 @@ def build_cached_messages_gemini(
     sys_prompt: str, query: str, evaluation_criteria: str,
     reference: str, reply: str, model_name: str,
     reference_type: str = 'model', history_context: str = '',
+    expert_opinions: str = '',
 ) -> List[Dict]:
     cached_context = _build_cached_context(
-        query, evaluation_criteria, reference, reference_type, history_context
+        query, evaluation_criteria, reference, reference_type, history_context, expert_opinions
     )
     return [
         {"role": "system", "content": sys_prompt, "cache": True},
@@ -166,7 +176,7 @@ def build_cached_messages(
     provider_type: str, sys_prompt: str, query: str,
     evaluation_criteria: str, reference: str, reply: str,
     model_name: str, reference_type: str = 'model',
-    history_context: str = '',
+    history_context: str = '', expert_opinions: str = '',
 ) -> List[Dict]:
     builders = {
         'claude': build_cached_messages_claude,
@@ -177,11 +187,11 @@ def build_cached_messages(
     if builder:
         return builder(
             sys_prompt, query, evaluation_criteria, reference,
-            reply, model_name, reference_type, history_context
+            reply, model_name, reference_type, history_context, expert_opinions
         )
 
     cached_context = _build_cached_context(
-        query, evaluation_criteria, reference, reference_type, history_context
+        query, evaluation_criteria, reference, reference_type, history_context, expert_opinions
     )
     user_content = cached_context + _build_reply_content(reply, model_name)
     return [

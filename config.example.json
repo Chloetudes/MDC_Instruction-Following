@@ -1,0 +1,27 @@
+{
+  "project_id": "my_project",
+  "data_batch": "eval",
+  "stages": ["analyze_results", "generate_report"],
+  "batch_id": "batch_1",
+  "eval_batch_id": "batch_1",
+  "questions_input_excel": "questions_eval.xlsx",
+  "questions_excel": null,
+  "replies_excel": null,
+  "analysis": {
+    "eval_batch_id": "batch_1",
+    "stats_only": false,
+    "backfill_questions": false
+  },
+  "report": {
+    "report_title": "指令遵循评测报告",
+    "eval_batch_id": "batch_1",
+    "top_n_cases": 20,
+    "use_report_cache": true,
+    "force_refresh": false,
+    "l1_loss_scope": "summary_only",
+    "focus_models_for_loss": [],
+    "stats_source_scope": "all",
+    "stats_include_sources": [],
+    "stats_exclude_sources": []
+  }
+}

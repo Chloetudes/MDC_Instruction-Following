@@ -5,7 +5,7 @@ from scipy.stats import spearmanr, kendalltau, pearsonr
 
 from .metrics import ScientificMetrics
 
-MIN_SAMPLE_FOR_CORRELATION = 3
+MIN_SAMPLE_FOR_CORRELATION = 3   # 至少 3 条回复同时有专家分与模型分即算一致性（含 ICC）；例如 1 道题下 ref+reply1+reply2 共 3 条即可
 MIN_MODELS_PER_QUESTION = 2
 
 
@@ -157,6 +157,19 @@ class HumanExpertConsistencyAnalyzer:
         self.rater_scores = data['rater_scores']
         self.expert_scores = data['expert_scores']
 
+    def _rater_scores_on_expert_tasks(self) -> pd.DataFrame:
+        """仅保留专家评估过的 (qid, model) 上的标注员打分，用于组内一致性与专家一致性。"""
+        if self.rater_scores.empty:
+            return self.rater_scores
+        if self.expert_scores.empty:
+            return self.rater_scores
+        expert_tasks = set(
+            zip(self.expert_scores['qid'].astype(str), self.expert_scores['model'].astype(str))
+        )
+        keys = list(zip(self.rater_scores['qid'].astype(str), self.rater_scores['model'].astype(str)))
+        mask = pd.Series(keys).isin(expert_tasks)
+        return self.rater_scores.loc[mask].copy()
+
     def analyze_rater_vs_others(self) -> pd.DataFrame:
         if self.rater_scores.empty:
             return pd.DataFrame()
@@ -220,9 +233,9 @@ class HumanExpertConsistencyAnalyzer:
                 '标注员': str(target_rater),
                 '有效对比数': len(all_spearmans),
                 '平均斯皮尔曼_ρ': round(avg_spearman, 3),
-                '平均ICC(2,1)': round(avg_icc, 3),
-                '平均加权Kappa': round(avg_kappa, 3),
-                '平均归一化MAE': round(avg_nmae, 3),
+                '平均ICC(2,1)': round(avg_icc, 3) if avg_icc is not None else np.nan,
+                '平均加权Kappa': round(avg_kappa, 3) if avg_kappa is not None else np.nan,
+                '平均归一化MAE': round(avg_nmae, 3) if avg_nmae is not None else np.nan,
                 '综合质量得分': round(composite, 3),
             })
 
@@ -243,13 +256,18 @@ class HumanExpertConsistencyAnalyzer:
         if self.expert_scores.empty or self.rater_scores.empty:
             return pd.DataFrame()
 
-        print("   - 计算标注员与专家一致性...")
+        # 仅在专家评估过的 (qid, model) 上计算
+        rater_scores_scope = self._rater_scores_on_expert_tasks()
+        if rater_scores_scope.empty:
+            return pd.DataFrame()
+
+        print("   - 计算标注员与专家一致性（仅专家评估过的题目×模型）...")
         expert = self.expert_scores.copy()
         expert['task_id'] = expert['qid'].astype(str) + '_' + expert['model'].astype(str)
         results = []
 
-        for rater in self.rater_scores['rater'].unique():
-            rater_data = self.rater_scores[self.rater_scores['rater'] == rater]
+        for rater in rater_scores_scope['rater'].unique():
+            rater_data = rater_scores_scope[rater_scores_scope['rater'] == rater]
             rater_avg = rater_data.groupby(['qid', 'model'])['score'].mean().reset_index()
             rater_avg['task_id'] = rater_avg['qid'].astype(str) + '_' + rater_avg['model'].astype(str)
             merged = rater_avg.merge(expert[['task_id', 'score']], on='task_id', suffixes=('_rater', '_expert'))
@@ -260,6 +278,10 @@ class HumanExpertConsistencyAnalyzer:
                 spearman_r = spearmanr(merged['score_rater'], merged['score_expert'])[0]
             except Exception:
                 spearman_r = np.nan
+            try:
+                pearson_r = pearsonr(merged['score_rater'], merged['score_expert'])[0]
+            except Exception:
+                pearson_r = np.nan
             icc = ScientificMetrics.icc_2_1(merged['score_rater'].values, merged['score_expert'].values)
             kappa = ScientificMetrics.cohens_kappa_weighted(merged['score_rater'].values, merged['score_expert'].values)
             mae = float(np.abs(merged['score_rater'] - merged['score_expert']).mean())
@@ -268,7 +290,8 @@ class HumanExpertConsistencyAnalyzer:
             results.append({
                 '标注员': str(rater),
                 '共同任务数': len(merged),
-                '与专家一致性_斯皮尔曼': round(spearman_r, 3) if not np.isnan(spearman_r) else 'N/A',
+                '与专家_斯皮尔曼': round(spearman_r, 3) if not np.isnan(spearman_r) else 'N/A',
+                '与专家_Pearson': round(pearson_r, 3) if not np.isnan(pearson_r) else 'N/A',
                 '与专家_ICC': round(icc, 3) if not np.isnan(icc) else 'N/A',
                 '与专家_加权Kappa': round(kappa, 3) if not np.isnan(kappa) else 'N/A',
                 '与专家_MAE': round(mae, 2),
@@ -277,7 +300,7 @@ class HumanExpertConsistencyAnalyzer:
 
         df = pd.DataFrame(results)
         if not df.empty:
-            df['_sort'] = pd.to_numeric(df['与专家一致性_斯皮尔曼'], errors='coerce')
+            df['_sort'] = pd.to_numeric(df['与专家_斯皮尔曼'], errors='coerce')
             df = df.sort_values('_sort', ascending=False).drop('_sort', axis=1).reset_index(drop=True)
             df.insert(0, '与专家一致性排名', df.index + 1)
         print(f"    完成: {len(df)} 位标注员")
@@ -287,8 +310,13 @@ class HumanExpertConsistencyAnalyzer:
         if self.expert_scores.empty or self.rater_scores.empty:
             return pd.DataFrame()
 
+        # 仅在专家评估过的 (qid, model) 上计算人工均分 vs 专家
+        rater_scores_scope = self._rater_scores_on_expert_tasks()
+        if rater_scores_scope.empty:
+            return pd.DataFrame()
+
         human_avg = (
-            self.rater_scores.groupby(['qid', 'model'])['score']
+            rater_scores_scope.groupby(['qid', 'model'])['score']
             .mean()
             .reset_index()
             .rename(columns={'score': 'human_avg_score'})
@@ -307,6 +335,10 @@ class HumanExpertConsistencyAnalyzer:
             spearman_r = spearmanr(merged['human_avg_score'], merged['score'])[0]
         except Exception:
             spearman_r = np.nan
+        try:
+            pearson_r = pearsonr(merged['human_avg_score'], merged['score'])[0]
+        except Exception:
+            pearson_r = np.nan
         mae = float(np.abs(merged['human_avg_score'] - merged['score']).mean())
 
         return pd.DataFrame([{
@@ -314,6 +346,7 @@ class HumanExpertConsistencyAnalyzer:
             '共同任务数': len(merged),
             '共同题目数': merged['qid'].nunique(),
             '斯皮尔曼_ρ': round(spearman_r, 3) if not np.isnan(spearman_r) else 'N/A',
+            'Pearson_r': round(pearson_r, 3) if not np.isnan(pearson_r) else 'N/A',
             'ICC(2,1)': round(icc, 3) if not np.isnan(icc) else 'N/A',
             'MAE': round(mae, 2),
             '归一化MAE': round(nmae, 3) if not np.isnan(nmae) else 'N/A',
@@ -369,16 +402,23 @@ class ModelReliabilityAnalyzer:
                 continue
             try:
                 spearman_m = spearmanr(m_data['model_score'], m_data['expert_score'])[0]
+                pearson_m = pearsonr(m_data['model_score'], m_data['expert_score'])[0]
             except Exception:
-                spearman_m = np.nan
+                spearman_m, pearson_m = np.nan, np.nan
             m_icc = ScientificMetrics.icc_2_1(m_data['model_score'].values, m_data['expert_score'].values)
             m_mae = float(np.abs(m_data['model_score'] - m_data['expert_score']).mean())
             m_nmae = ScientificMetrics.normalized_mae(m_data['model_score'].values, m_data['expert_score'].values)
+            m_diff = np.abs(m_data['model_score'].values - m_data['expert_score'].values)
+            m_exact_pct = round(float(np.mean(m_diff == 0)) * 100, 1)
+            m_within05_pct = round(float(np.mean(m_diff <= 0.5)) * 100, 1)
             model_results.append({
                 '模型': model_name,
                 '样本量': len(m_data),
+                '皮尔逊_r': round(pearson_m, 3) if not np.isnan(pearson_m) else 'N/A',
                 '斯皮尔曼_ρ': round(spearman_m, 3) if not np.isnan(spearman_m) else 'N/A',
                 'ICC(2,1)': round(m_icc, 3) if not np.isnan(m_icc) else 'N/A',
+                '准确率(%)': m_exact_pct,
+                '容差准确率_±0.5分(%)': m_within05_pct,
                 'MAE': round(m_mae, 2),
                 '归一化MAE': round(m_nmae, 3) if not np.isnan(m_nmae) else 'N/A',
                 '模型均分': round(float(m_data['model_score'].mean()), 2),
@@ -445,3 +485,105 @@ class ModelReliabilityAnalyzer:
 
         print(f"    完成: 整体ρ={round(rank_corr, 3) if not np.isnan(rank_corr) else 'N/A'}")
         return summary_df, comparison_df
+
+
+class ExpertHumanMachineConsistencyAnalyzer:
+    """
+    专家人机一致性分析：按专家（专家列）统计每题人机一致性及专家综合人机一致性。
+    用于检验专家 rubrics 质量：若 rubrics 细致、覆盖多种模型回复，则人机打分一致性高。
+    """
+
+    def __init__(self, data: dict):
+        self.replies = data['replies']
+        self.expert_scores = data['expert_scores']
+
+    def analyze(self) -> tuple:
+        """
+        按专家统计人机一致性。
+        Returns:
+            expert_summary: 每位专家的综合人机一致性。
+                专家评估数 = 该专家在回复表中有「专家打分」的条数。只要专家打分非空且该行有模型评估分数即参与统计；部分题目无 ref/reply 不影响已评估数据，AI 会评估所有回复。
+            expert_per_question: 每位专家每道题的人机一致性明细
+        """
+        if self.expert_scores.empty or self.replies.empty:
+            return pd.DataFrame(), pd.DataFrame()
+
+        model_scores = self.replies[['qid', 'model', 'eval_score']].dropna()
+        experts = self.expert_scores['rater'].unique()
+
+        # 单专家时无需按人拆分，但仍可输出整体一致性供参考
+        expert_summary_rows = []
+        expert_per_question_rows = []
+
+        for expert in experts:
+            exp_data = self.expert_scores[self.expert_scores['rater'] == expert].copy()
+            merged = exp_data.merge(model_scores, on=['qid', 'model'], how='inner')
+
+            # 每题人机一致性：一题有 ref+reply1+reply2 即 3 对人机分，每题都算斯皮尔曼与 ICC，写入题目反馈
+            per_q_corrs = []
+            for qid in merged['qid'].unique():
+                q_data = merged[merged['qid'] == qid]
+                if len(q_data) < MIN_MODELS_PER_QUESTION:
+                    continue
+                r_val = np.nan
+                try:
+                    r_val, _ = spearmanr(q_data['score'], q_data['eval_score'])
+                except Exception:
+                    pass
+                if not np.isnan(r_val):
+                    per_q_corrs.append(r_val)
+                icc_q = np.nan
+                try:
+                    icc_q = ScientificMetrics.icc_2_1(q_data['score'].values, q_data['eval_score'].values)
+                except Exception:
+                    pass
+                expert_per_question_rows.append({
+                    '专家': str(expert),
+                    'qid': str(qid),
+                    '共同模型数': len(q_data),
+                    '人机一致性_斯皮尔曼': round(r_val, 3) if not np.isnan(r_val) else np.nan,
+                    '人机一致性_ICC': round(icc_q, 3) if not np.isnan(icc_q) else np.nan,
+                })
+
+            n_pairs = len(merged)
+            if n_pairs < MIN_SAMPLE_FOR_CORRELATION:
+                expert_summary_rows.append({
+                    '专家': str(expert),
+                    '评估题目数': merged['qid'].nunique() if not merged.empty else 0,
+                    '专家评估数': len(exp_data),
+                    '有效人机对数': n_pairs,
+                    '每题人机一致性_斯皮尔曼均值': 'N/A',
+                    '综合人机一致性_斯皮尔曼': 'N/A',
+                    '综合人机一致性_ICC': 'N/A',
+                    '综合人机一致性_MAE': 'N/A',
+                })
+                continue
+
+            try:
+                spearman_overall = spearmanr(merged['score'], merged['eval_score'])[0]
+            except Exception:
+                spearman_overall = np.nan
+            icc = ScientificMetrics.icc_2_1(merged['score'].values, merged['eval_score'].values)
+            mae = float(np.abs(merged['score'] - merged['eval_score']).mean())
+
+            # 有效人机对数 = 同时有专家打分与模型评估分数的条数，≥3 才计算 ICC
+            expert_summary_rows.append({
+                '专家': str(expert),
+                '评估题目数': merged['qid'].nunique(),
+                '专家评估数': len(exp_data),
+                '有效人机对数': len(merged),
+                '每题人机一致性_斯皮尔曼均值': round(float(np.mean(per_q_corrs)), 3) if per_q_corrs else 'N/A',
+                '综合人机一致性_斯皮尔曼': round(spearman_overall, 3) if not np.isnan(spearman_overall) else 'N/A',
+                '综合人机一致性_ICC': round(icc, 3) if not np.isnan(icc) else 'N/A',
+                '综合人机一致性_MAE': round(mae, 2),
+            })
+
+        summary_df = pd.DataFrame(expert_summary_rows)
+        if not summary_df.empty:
+            summary_df['_sort'] = pd.to_numeric(summary_df['每题人机一致性_斯皮尔曼均值'], errors='coerce')
+            summary_df = summary_df.sort_values('_sort', ascending=False).drop('_sort', axis=1).reset_index(drop=True)
+            summary_df.insert(0, '人机一致性排名', summary_df.index + 1)
+
+        per_q_df = pd.DataFrame(expert_per_question_rows)
+        print(f"   - 专家人机一致性: {len(summary_df)} 位专家")
+        return summary_df, per_q_df

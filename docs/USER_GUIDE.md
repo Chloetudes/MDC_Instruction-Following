@@ -1,4 +1,4 @@
-# CIF 评测系统 — 完整使用指南
+# 复杂指令遵循评测系统 — 完整使用指南
 
 > 本文档面向评测系统的使用者，涵盖从环境准备、数据准备、配置设置到运行评测、查看报告的完整流程。
 
@@ -43,7 +43,10 @@ pip install pandas openpyxl scipy numpy tqdm
 python -m evaluation.main
 ```
 
-所有配置均在 `evaluation/main.py` 的 `CONFIG` 字典中完成，**无需修改其他文件**。
+推荐以项目配置为准：在 `outputs/<project_id>/config.json` 中配置并运行（例如 `outputs/my_project/config.json`）。  
+`evaluation/main.py` 的 `CONFIG` 作为默认模板/兜底配置，通常不需要频繁修改。
+
+配置与流程速查见：`docs/CONFIG_PLAYBOOK.md`；阶段模板与单阶段列表见：`docs/STAGES_REFERENCE.md`。
 
 ### 最简运行示例（已有题目，只做评测）
 
@@ -56,7 +59,7 @@ CONFIG = {
     'stages': ['generate_criteria', 'generate_references', 'generate_replies', 'evaluate_replies'],
     'sysprompt_excel': 'data/evaluation/sysprompts.xlsx',
     'output_base_dir': 'outputs/evaluation',
-    'provider': 'idealab',
+    'provider': 'openai',  # 或 dashscope 等，对应 config.py 中配置的 provider
     'model': 'claude_sonnet4_5',
     'timeout': 300,
     'batch_id': 'batch_1',
@@ -278,7 +281,7 @@ Stage 5b: generate_report → evaluation_report.html + .md
 
 | 字段名 | 类型 | 说明 |
 |--------|------|------|
-| `qid` | 字符串 | 题目唯一 ID，建议格式 `Q001`、`CIF_001` |
+| `qid` | 字符串 | 题目唯一 ID，建议格式 `Q001`、`Q_001` |
 | `query` | 字符串 | 题目内容（指令文本） |
 
 **推荐字段（用于分维度分析）**：
@@ -304,8 +307,8 @@ Stage 5b: generate_report → evaluation_report.html + .md
 ```
 qid       | query                              | L1   | L2       | difficulty_level | human_rubrics
 ----------|------------------------------------|----- |----------|------------------|---------------
-CIF_001   | 请写一篇500字的科技新闻报道...      | 写作 | 新闻写作  | C                |
-CIF_002   | 用Python实现一个二叉树的层序遍历... | 代码 | 算法     | B                | 1.正确性(5分) 2.时间复杂度(3分) 3.注释(2分)
+Q_001     | 请写一篇500字的科技新闻报道...      | 写作 | 新闻写作  | C                |
+Q_002     | 用Python实现一个二叉树的层序遍历... | 代码 | 算法     | B                | 1.正确性(5分) 2.时间复杂度(3分) 3.注释(2分)
 ```
 
 ---
@@ -357,7 +360,7 @@ CONFIG = {
     'output_base_dir': 'outputs/evaluation',
 
     # ========== 裁判模型配置（用于 Stage 1/1.5/2/4/5）==========
-    'provider': 'idealab',           # Provider 名称（对应 config.py 中的配置）
+    'provider': 'openai',  # 或 dashscope 等，对应 config.py 中配置的 provider           # Provider 名称（对应 config.py 中的配置）
     'model': 'claude_sonnet4_5',     # 裁判模型名称
     'timeout': 300,                  # 单次请求超时（秒）
 
@@ -479,7 +482,7 @@ CONFIG = {
     ],
     'sysprompt_excel': 'data/evaluation/sysprompts.xlsx',
     'output_base_dir': 'outputs/evaluation',
-    'provider': 'idealab',
+    'provider': 'openai',  # 或 dashscope 等，对应 config.py 中配置的 provider
     'model': 'claude_sonnet4_5',
     'timeout': 300,
     'generation': {
@@ -551,7 +554,7 @@ CONFIG = {
     ],
     'sysprompt_excel': 'data/evaluation/sysprompts.xlsx',
     'output_base_dir': 'outputs/evaluation',
-    'provider': 'idealab',
+    'provider': 'openai',  # 或 dashscope 等，对应 config.py 中配置的 provider
     'model': 'claude_sonnet4_5',
     'timeout': 300,
     'batch_id': 'batch_1',
@@ -563,7 +566,7 @@ CONFIG = {
     'max_workers': 5,
     'checkpoint_interval': 10,
     'report': {
-        'report_title': 'CIF 400 多模型评测报告 2026Q1',
+        'report_title': '指令遵循多模型评测报告',
         'top_n_cases': 20,
     },
 }
@@ -591,7 +594,7 @@ CONFIG = {
     ],
     'sysprompt_excel': 'data/evaluation/sysprompts.xlsx',
     'output_base_dir': 'outputs/evaluation',
-    'provider': 'idealab',
+    'provider': 'openai',  # 或 dashscope 等，对应 config.py 中配置的 provider
     'model': 'claude_sonnet4_5',
     'timeout': 300,
     'generation': {
@@ -631,7 +634,7 @@ CONFIG = {
     ],
     'sysprompt_excel': 'data/evaluation/sysprompts.xlsx',
     'output_base_dir': 'outputs/evaluation',
-    'provider': 'idealab',
+    'provider': 'openai',  # 或 dashscope 等，对应 config.py 中配置的 provider
     'model': 'claude_sonnet4_5',
     'timeout': 300,
     'generation': {
@@ -859,7 +862,7 @@ CONFIG = {
 
 **1. qid 必须是字符串类型**
 
-建议使用 `Q001`、`CIF_001` 等带前缀的格式，避免纯数字导致的前导零丢失问题。
+建议使用 `Q001`、`Q_001` 等带前缀的格式，避免纯数字导致的前导零丢失问题。
 
 **2. batch_id 要保持一致**
 

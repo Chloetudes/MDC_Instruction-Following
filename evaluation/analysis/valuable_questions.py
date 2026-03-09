@@ -57,8 +57,14 @@ class ValuableQuestionAnalyzer:
             model_avg = q_data.groupby('model')['eval_score'].mean()
             model_diff = self._safe_float(model_avg.max() - model_avg.min()) if len(model_avg) >= 2 else np.nan
 
+            q_info = self.questions[self.questions['qid'] == qid]
             cv = std_score / mean_score if mean_score > 0 else 0
-            difficulty_p = mean_score / 100
+            # 优先用题目表预设难度分，无则用模型均分/100 作为实际难度
+            preset_diff = np.nan
+            if not q_info.empty and 'difficulty_score' in q_info.columns:
+                v = q_info['difficulty_score'].iloc[0]
+                preset_diff = self._safe_float(v) if pd.notna(v) else np.nan
+            difficulty_p = (preset_diff / 100) if not np.isnan(preset_diff) and preset_diff > 0 else (mean_score / 100)
             difficulty_suitability = 1 - abs(difficulty_p - 0.5) * 2
             expert_bias = abs(mean_score - expert_mean) if not np.isnan(expert_mean) else 50
             expert_bias_norm = 1 - (expert_bias / 100)
@@ -70,8 +76,6 @@ class ValuableQuestionAnalyzer:
                 + difficulty_suitability * 0.15
                 + expert_bias_norm * 0.10
             )
-
-            q_info = self.questions[self.questions['qid'] == qid]
 
             human_comment = ''
             if not self.rater_scores.empty:

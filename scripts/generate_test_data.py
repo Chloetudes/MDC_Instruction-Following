@@ -136,7 +136,7 @@ SAMPLE_QUESTIONS = [
 
 def generate_questions_excel(count: int = 3, output_path: str = None) -> str:
     """生成 questions.xlsx 测试文件"""
-    dm = DirectoryManager("outputs/evaluation")
+    dm = DirectoryManager("outputs")
     if output_path is None:
         output_path = dm.get_path("questions", "questions.xlsx")
 
@@ -155,7 +155,7 @@ def generate_stage0_excel(output_path: str = None) -> str:
     用于测试 extract_instructions 阶段。
     """
     import json
-    dm = DirectoryManager("outputs/evaluation")
+    dm = DirectoryManager("outputs")
     if output_path is None:
         output_path = dm.get_path("stage0_generation", "generated_responses.xlsx")
 

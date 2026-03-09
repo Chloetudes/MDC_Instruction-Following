@@ -31,11 +31,14 @@ def _load_schema(schema_excel: str) -> tuple:
         print(f"⚠️  解析 schema Sheet1 失败: {e}")
         return [], pd.DataFrame(), pd.DataFrame()
 
-    required_cols = {'L1', 'L2', 'L3', 'count'}
-    if not required_cols.issubset(set(df_schema.columns)):
-        missing = required_cols - set(df_schema.columns)
-        print(f"⚠️  schema.xlsx Sheet1 缺少必需列: {missing}，将忽略 schema 配置")
+    if not {'L1', 'L2', 'L3'}.issubset(set(df_schema.columns)):
+        print(f"⚠️  schema.xlsx Sheet1 缺少必需列 L1/L2/L3，将忽略 schema 配置")
         return [], pd.DataFrame(), pd.DataFrame()
+    if 'count' not in df_schema.columns and '合成数量' not in df_schema.columns:
+        print(f"⚠️  schema.xlsx Sheet1 缺少列 count 或 合成数量（每类目标合成条数），将忽略 schema 配置")
+        return [], pd.DataFrame(), pd.DataFrame()
+    if '合成数量' in df_schema.columns and 'count' not in df_schema.columns:
+        df_schema = df_schema.rename(columns={'合成数量': 'count'})
 
     if 'Sheet2' in xl.sheet_names:
         try:
@@ -143,6 +146,42 @@ def _pick_seeds(seeds: List[Dict], task_spec: Optional[Dict], max_count: int = 3
         matched.extend(extra)
 
     return random.sample(matched, min(max_count, len(matched)))
+
+
+def _format_task_intent_table(task_spec: Optional[Dict], df_schema: pd.DataFrame) -> str:
+    """将 schema 格式化为任务意图参考表，供 instruction_generation 的 {{TASK_INTENT_TABLE}} 占位符注入。"""
+    if df_schema is None or df_schema.empty:
+        return "（当前无 schema 配置，请根据下方约束体系自由选择任务类型并设计指令。）"
+
+    def row_to_line(r, with_example: bool = True) -> str:
+        l1 = safe_str(r.get('L1', ''))
+        l2 = safe_str(r.get('L2', ''))
+        l3 = safe_str(r.get('L3', ''))
+        diff = safe_str(r.get('difficulty', ''))
+        desc = safe_str(r.get('description', ''))[:200]
+        ex = (safe_str(r.get('example', ''))[:150] + "…") if with_example and r.get('example') else ""
+        return f"| {l1} | {l2} | {l3} | {diff} | {desc} | {ex} |"
+
+    header = "| 一级(L1) | 二级(L2) | 任务类型(L3) | 难度 | 特征描述 | 示范案例 |"
+    sep = "|---------|---------|--------------|------|----------|----------|"
+
+    if task_spec:
+        # 本批次仅聚焦当前任务类型：只展示一行
+        r = {
+            'L1': task_spec.get('L1', ''),
+            'L2': task_spec.get('L2', ''),
+            'L3': task_spec.get('L3', ''),
+            'difficulty': task_spec.get('difficulty', ''),
+            'description': task_spec.get('description', ''),
+            'example': task_spec.get('schema_example', ''),
+        }
+        body = row_to_line(r)
+        return "\n".join([header, sep, body])
+    # 无当前 task_spec 时展示完整 schema 表（如纯 sysprompt 模式下的首屏）
+    lines = [header, sep]
+    for _, r in df_schema.iterrows():
+        lines.append(row_to_line(r))
+    return "\n".join(lines)
 
 
 def _build_user_prompt(task_spec: Optional[Dict], seeds: List[Dict], items_per_batch: int = 3) -> str:
@@ -263,9 +302,11 @@ def generate_instructions(
 
     for batch_idx, task_spec in enumerate(tqdm(pending_tasks, desc="🔄 生成进度", ncols=100)):
         try:
+            task_intent_table = _format_task_intent_table(task_spec, df_schema)
+            sys_prompt_filled = sys_prompt.replace("{{TASK_INTENT_TABLE}}", task_intent_table)
             user_prompt = _build_user_prompt(task_spec, seeds, items_per_batch)
             messages = [
-                {"role": "system", "content": sys_prompt},
+                {"role": "system", "content": sys_prompt_filled},
                 {"role": "user", "content": user_prompt},
             ]
             response = client.chat(model=model, messages=messages, temperature=temperature)

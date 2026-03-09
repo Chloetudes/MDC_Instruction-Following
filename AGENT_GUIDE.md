@@ -46,8 +46,7 @@ python agent_runner.py --mode resume
 打开 `config.py`，将所有 `"YOUR_API_KEY_HERE"` 替换为真实的 API Key。
 
 **最少需要配置的 provider**（用于裁判模型）：
-- `idealab`（推荐，内部服务，稳定）
-- 或 `routify_claude`（Claude 系列）
+- 在 `config.example.py` 复制为 `config.py` 后配置任一 provider（如 `openai`、`dashscope`、`openrouter`）
 
 **被测模型**（在 `evaluation/main.py` 的 `CONFIG['reply_model_configs']` 中配置）：
 ```python
@@ -62,7 +61,7 @@ python agent_runner.py --mode resume
 
 在 `evaluation/main.py` 的 `CONFIG` 中确认：
 ```python
-'provider': "idealab",       # 裁判模型的 provider
+'provider': "openai",       # 裁判模型的 provider（与 config.py 一致）
 'model': "claude_sonnet4_5", # 裁判模型名称
 ```
 
@@ -87,7 +86,7 @@ python agent_runner.py --mode resume
 
 **输入**：无（或可选的 schema.xlsx 控制任务类型分布）
 
-**输出**：`outputs/evaluation/stage0_generation/generated_responses.xlsx`
+**输出**：`outputs/stage0_generation/generated_responses.xlsx`
 - 列：`id`, `response`（JSON 数组字符串）, `L1`, `L2`, `L3`
 
 **关键配置**：
@@ -274,12 +273,12 @@ analysis_report.xlsx + evaluation_report.html
 
 ## 六、常见问题与修复
 
-### Q1: `FileNotFoundError: No such file or directory: 'outputs/evaluation/...'`
+### Q1: `FileNotFoundError: No such file or directory: 'outputs/...'`
 
 **原因**：上游阶段未运行，输入文件不存在
 
 **修复**：
-1. 检查 `outputs/evaluation/` 目录下已有哪些文件
+1. 检查 `outputs/` 目录下已有哪些文件
 2. 用 `--mode resume` 自动检测并从正确位置续跑
 3. 或手动在 `main.py` 的 `CONFIG['stages']` 中添加缺失的上游阶段
 
@@ -292,7 +291,7 @@ analysis_report.xlsx + evaluation_report.html
 **修复步骤**：
 1. 检查 `config.py` 中 `provider` 对应的 `api_key` 是否正确
 2. 检查 `model` 名称是否在 `MODEL_PROVIDER_MAPPING` 中
-3. 尝试换一个 provider（如从 `idealab` 换到 `routify_claude`）
+3. 尝试换一个 provider（如从 `openai` 换到 `dashscope`）
 
 ---
 
@@ -387,7 +386,7 @@ CONFIG = {
 ## 八、输出文件说明
 
 ```
-outputs/evaluation/
+outputs/
 ├── stage0_generation/
 │   └── generated_responses.xlsx    # LLM 生成的原始 JSON 批次
 ├── stage0.5_extraction/

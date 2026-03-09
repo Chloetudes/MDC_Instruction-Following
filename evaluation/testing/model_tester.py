@@ -1,4 +1,12 @@
 # -*- coding: utf-8 -*-
+"""
+模型可用性测试：支持单 provider、多 providers（同一模型多源）。
+配置中可全量罗列所有模型/版本，测试后按可用清单交互选择，再进入批量回复。
+
+严谨性说明：
+- 默认使用「回复式」探针（与真实题目长度接近），通过即表示能完成一次类回复请求，尽量保证批量回复时选取的模型可用。
+- test_timeout 建议与批量 timeout 一致或更大；若仍出现 RemoteDisconnected，可降低 max_workers 或增大 timeout。
+"""
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Dict, List, Optional
@@ -10,11 +18,52 @@ from config import get_provider, get_provider_for_model
 from clients.openai_client import OAIClient
 from ..core.utils import safe_save_excel
 
+# 默认用「回复式」探针：长度与真实题目接近，通过即表示能完成一次类回复请求，减少批量时 RemoteDisconnected
+DEFAULT_REPLY_LIKE_PROMPT = (
+    "请根据以下要求写一段话：主题为数据安全与隐私保护，字数约100字，需包含三个要点，"
+    "并采用分点列举的格式。不要输出多余解释，直接给出正文。"
+)
+
+
+def expand_reply_model_configs(model_configs: List[Dict]) -> List[Dict]:
+    """
+    将 reply_model_configs 展开为 (provider, model) 列表，便于逐项测试。
+    - { "model": "x" } → 使用 get_provider_for_model(x) 得到 1 项
+    - { "model": "x", "provider": "p1" } → 1 项 (p1, x)
+    - { "model": "x", "providers": ["p1", "p2"] } → 2 项 (p1,x), (p2,x)
+    """
+    expanded = []
+    for cfg in model_configs:
+        model_name = cfg.get("model")
+        if not model_name:
+            continue
+        enable_thinking = cfg.get("enable_thinking", False)
+        extra = {k: v for k, v in cfg.items() if k in ("展示名称",)}
+        if "providers" in cfg and cfg["providers"]:
+            for p in cfg["providers"]:
+                expanded.append({"provider": p, "model": model_name, "enable_thinking": enable_thinking, **extra})
+        elif cfg.get("provider"):
+            expanded.append({
+                "provider": cfg["provider"],
+                "model": model_name,
+                "enable_thinking": enable_thinking,
+                **extra,
+            })
+        else:
+            try:
+                p = get_provider_for_model(model_name).name
+                expanded.append({"provider": p, "model": model_name, "enable_thinking": enable_thinking, **extra})
+            except Exception:
+                expanded.append({"provider": "unknown", "model": model_name, "enable_thinking": enable_thinking, **extra})
+    return expanded
+
 
 class ModelAvailabilityTester:
-    def __init__(self, timeout: int = 30):
+    """模型可用性探针：默认使用回复式探针（与真实题目长度接近），通过表示能完成类回复请求。"""
+
+    def __init__(self, timeout: int = 30, test_prompt: Optional[str] = None):
         self.timeout = timeout
-        self.test_prompt = "请用一句话介绍你自己。"
+        self.test_prompt = test_prompt if test_prompt is not None else DEFAULT_REPLY_LIKE_PROMPT
 
     def test_single_model(self, provider: str, model: str) -> Dict:
         try:
@@ -56,33 +105,44 @@ class ModelAvailabilityTester:
             return {'provider': provider, 'model': model, 'available': False,
                     'error': str(e), 'response_time': None}
 
-    def test_all_models(self, model_configs: List[Dict[str, str]], max_workers: int = 3) -> pd.DataFrame:
+    def test_all_models(self, model_configs: List[Dict], max_workers: int = 3) -> pd.DataFrame:
+        """测试所有模型；model_configs 支持 provider / providers 列表，会先展开再逐项测试。"""
+        expanded = expand_reply_model_configs(model_configs)
         print(f"\n{'=' * 60}")
         print(f"🧪 模型可用性测试")
         print(f"{'=' * 60}\n")
-        print(f"  待测试模型数: {len(model_configs)}")
-        print(f"  并发数: {max_workers}")
-        print(f"  超时时间: {self.timeout}秒\n")
+        print(f"  配置项: {len(model_configs)}  展开后待测: {len(expanded)}")
+        print(f"  并发数: {max_workers}  超时: {self.timeout}秒  探针: 回复式（{len(self.test_prompt)}字），通过即表示能完成类回复请求\n")
 
         results = []
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {}
-            for cfg in model_configs:
-                try:
-                    provider = cfg.get('provider') or get_provider_for_model(cfg['model']).name
-                    future = executor.submit(self.test_single_model, provider, cfg['model'])
-                    futures[future] = cfg
-                except Exception as e:
-                    results.append({'provider': 'unknown', 'model': cfg['model'],
-                                    'available': False, 'error': f"配置错误: {str(e)}", 'response_time': None})
+            for cfg in expanded:
+                provider = cfg.get("provider") or "unknown"
+                model = cfg["model"]
+                if provider == "unknown":
+                    results.append({"provider": "unknown", "model": model, "available": False,
+                                    "error": "未配置 provider 且无法从 get_provider_for_model 解析", "response_time": None})
+                    continue
+                future = executor.submit(self.test_single_model, provider, model)
+                futures[future] = cfg
 
             for future in tqdm(as_completed(futures), total=len(futures), desc="🔄 测试进度", ncols=100):
                 try:
-                    results.append(future.result())
+                    row = future.result()
+                    cfg = futures[future]
+                    row["enable_thinking"] = cfg.get("enable_thinking", False)
+                    if "展示名称" in cfg:
+                        row["展示名称"] = cfg.get("展示名称", "")
+                    results.append(row)
                 except Exception as e:
                     cfg = futures[future]
-                    results.append({'provider': cfg.get('provider', 'unknown'), 'model': cfg['model'],
-                                    'available': False, 'error': str(e), 'response_time': None})
+                    r = {"provider": cfg.get("provider", "unknown"), "model": cfg["model"],
+                         "available": False, "error": str(e), "response_time": None,
+                         "enable_thinking": cfg.get("enable_thinking", False)}
+                    if "展示名称" in cfg:
+                        r["展示名称"] = cfg.get("展示名称", "")
+                    results.append(r)
 
         df = pd.DataFrame(results)
         available_count = df['available'].sum()
@@ -91,6 +151,8 @@ class ModelAvailabilityTester:
         print(f"\n{'=' * 60}")
         print(f"✅ 测试完成 — 可用: {available_count}  不可用: {unavailable_count}")
         print(f"{'=' * 60}")
+        if available_count > 0:
+            print("  💡 以上模型已通过回复式探针，将用于批量回复。若仍出现断连，可降低 max_workers 或增大 timeout。")
 
         if available_count > 0:
             print(f"\n✅ 可用模型列表:")
