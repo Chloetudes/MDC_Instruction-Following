@@ -1,6 +1,0 @@
-{
-  "report_title": "TOM 情感评测报告",
-  "stages": [],
-  "data_batch": "",
-  "_comment": "TOM 项目待配置：配置 stages、sysprompts.xlsx、questions 等后即可运行。"
-}
